@@ -20,8 +20,9 @@ class TestLocal(Engine):
     name = "Test tone (local)"
     kind = "local"
     voices = [{"id": "low", "label": "Low", "note": "test"}, {"id": "high", "label": "High", "note": "test"}]
+    params = [{"id": "wobble", "label": "Wobble", "type": "range", "min": 0, "max": 1, "step": 0.1, "default": 0.5, "hint": "test control"}]
 
-    def synth(self, text, voice, *, rate=1.0, variation=False):
+    def synth(self, text, voice, *, rate=1.0, variation=False, params=None, ref=None):
         time.sleep(0.15)
         return _tone(text, 24000, 330 if voice == "high" else 180), 24000
 

@@ -1,19 +1,22 @@
 # Voice Studio setup. Safe to run again: finished steps are skipped.
-# Everything is installed INSIDE this folder (runtime\ and models\), so the
-# folder stays self-contained. Nothing outside it is changed except:
+# Everything is installed INSIDE this folder (runtime\, envs\ and models\), so
+# the folder stays self-contained. Nothing outside it is changed except:
 #   - a "Voice Studio" shortcut on your Desktop
 #   - a setup log in C:\Temp\VoiceStudio_Setup_<date-time>\
 #   - Python 3.11 itself, only if this PC does not have it (you are asked first)
-param([switch]$Yes, [switch]$NoShortcut)
+#
+#   Setup.bat                      asks which voice engines to install
+#   Setup.bat -Engines chatterbox,openvoice -Yes     no questions
+param([string[]]$Engines, [switch]$Yes, [switch]$NoShortcut)
 $ErrorActionPreference = "Continue"
 $root = $PSScriptRoot
 Set-Location $root
-$rt   = Join-Path $root "runtime"
-$py   = Join-Path $rt "Scripts\python.exe"
 $models = Join-Path $root "models"
-$seed = Join-Path $env:USERPROFILE "Videos\What Could Go Wrong\_voice"   # an earlier install on this PC, if any
-$ckptName = "wavtokenizer_large_speech_320_24k.ckpt"
-$yamlName = "wavtokenizer_mediumdata_frame75_3s_nq1_code4096_dim512_kmeans200_attn.yaml"
+$env:VOICESTUDIO_MODELS = $models
+$env:VOICESTUDIO_FETCH = "1"
+$env:PYTHONUTF8 = "1"
+$MELO_SRC = "https://github.com/myshell-ai/MeloTTS/archive/209145371cff8fc3bd60d7be902ea69cbdb7965a.zip"
+$OV_SRC   = "https://github.com/myshell-ai/OpenVoice/archive/74a1d147b17a8c3092dd5430504bd83ef6c7eb23.zip"
 
 $logDir = "C:\Temp\VoiceStudio_Setup_$(Get-Date -Format yyyyMMdd-HHmmss)"
 New-Item -ItemType Directory -Force $logDir | Out-Null
@@ -32,95 +35,96 @@ function Ask($question) {
   return ($a -eq "" -or $a -match "^[Yy]")
 }
 function Has311 { try { $null = & py -3.11 --version 2>&1; return ($LASTEXITCODE -eq 0) } catch { return $false } }
-function RuntimeWorks { if (-not (Test-Path $py)) { return $false }; & $py -c "import torch, torchaudio, transformers, outetts" 2>$null; return ($LASTEXITCODE -eq 0) }
+function PyOf($envDir) { return (Join-Path $envDir "Scripts\python.exe") }
+function Works($py, $imports) {
+  if (-not (Test-Path $py)) { return $false }
+  & $py -c "import $imports" 2>$null
+  return ($LASTEXITCODE -eq 0)
+}
+function New-Venv($dir) {
+  if (Test-Path (PyOf $dir)) { return }
+  & py -3.11 -m venv $dir
+  if ($LASTEXITCODE -ne 0) { Stop-Setup "Could not create the Python environment in $dir." }
+  & (PyOf $dir) -m pip install --disable-pip-version-check --quiet --upgrade pip
+}
+function Install-Torch($py) {
+  $gpu = $false
+  try { $null = & nvidia-smi 2>&1; $gpu = ($LASTEXITCODE -eq 0) } catch { }
+  if ($gpu) {
+    Write-Host "Installing PyTorch 2.6 with NVIDIA GPU support (2.5 GB the first time, then reused from pip's cache)"
+    & $py -m pip install --disable-pip-version-check torch==2.6.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu124
+  } else {
+    Write-Host "No NVIDIA GPU found: installing the CPU version of PyTorch (the engines work, but slowly)" -ForegroundColor Yellow
+    & $py -m pip install --disable-pip-version-check torch==2.6.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cpu
+  }
+  if ($LASTEXITCODE -ne 0) { Stop-Setup "PyTorch did not install. Check the internet connection and run Setup.bat again." }
+}
 
 Write-Host "Voice Studio setup" -ForegroundColor Green
 Write-Host "Folder: $root"
 
-# ---- 1. Python runtime (inside this folder) ---------------------------------
-if (-not (RuntimeWorks)) {
-  $seedVenv = Join-Path $seed ".venv"
-  if ((-not (Test-Path $rt)) -and (Test-Path (Join-Path $seedVenv "Scripts\python.exe"))) {
-    Say "Copying the Python environment that is already on this PC (no download, several GB, a few minutes)"
-    robocopy $seedVenv $rt /E /MT:8 /NFL /NDL /NJH /NP /R:1 /W:1 | Out-Null
-    if ($LASTEXITCODE -ge 8) { Write-Host "Copy had errors; will install fresh instead." -ForegroundColor Yellow }
-  }
-  if (-not (RuntimeWorks)) {
-    if (-not (Has311)) {
-      Say "Python 3.11 is needed and was not found"
-      if (-not (Ask "Install Python 3.11 from the official source using winget?")) { Stop-Setup "Python 3.11 is required." }
-      winget install -e --id Python.Python.3.11 --accept-package-agreements --accept-source-agreements
-      $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
-      if (-not (Has311)) { Stop-Setup "Python was installed. Close this window and start Voice Studio again." }
-    }
-    if (-not (Test-Path $py)) {
-      Say "Creating the Python environment in runtime\"
-      & py -3.11 -m venv $rt
-      if ($LASTEXITCODE -ne 0) { Stop-Setup "Could not create the Python environment." }
-    }
-    $gpu = $false
-    try { $null = & nvidia-smi 2>&1; $gpu = ($LASTEXITCODE -eq 0) } catch { }
-    if ($gpu) {
-      Say "Installing PyTorch with NVIDIA GPU support (about 2.5 GB download)"
-      & $py -m pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124
-    } else {
-      Say "No NVIDIA GPU found: installing the CPU version of PyTorch (YarnGPT will work, but slowly)" "Yellow"
-      & $py -m pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
-    }
-    if ($LASTEXITCODE -ne 0) { Stop-Setup "PyTorch did not install. Check the internet connection and run Setup.bat again." }
-  }
+# ---- 0. Python 3.11 ---------------------------------------------------------
+if (-not (Has311)) {
+  Say "Python 3.11 is needed and was not found"
+  if (-not (Ask "Install Python 3.11 from the official source using winget?")) { Stop-Setup "Python 3.11 is required." }
+  winget install -e --id Python.Python.3.11 --accept-package-agreements --accept-source-agreements
+  $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
+  if (-not (Has311)) { Stop-Setup "Python was installed. Close this window and start Voice Studio again." }
 }
 
-# ---- 2. Python packages -----------------------------------------------------
-& $py -c "import fastapi, uvicorn, keyring, lameenc, transformers, outetts, uroman, inflect, soundfile, soxr, pyloudnorm, librosa, azure.cognitiveservices.speech" 2>$null
-if ($LASTEXITCODE -ne 0) {
-  Say "Python packages"
-  Write-Host "These packages will be installed into this folder's runtime\ (not system-wide):"
-  Write-Host "  New for Voice Studio : fastapi, uvicorn, keyring, lameenc (plus their small dependencies)"
-  Write-Host "  Voice engines        : anything missing from requirements.txt"
-  if (-not (Ask "Install them now?")) { Stop-Setup "Packages are required to run the app." }
+# ---- 1. Main app environment (small) ----------------------------------------
+$rt = Join-Path $root "runtime"
+$py = PyOf $rt
+$mainImports = "fastapi, uvicorn, keyring, lameenc, numpy, soundfile, soxr, pyloudnorm, librosa, azure.cognitiveservices.speech"
+if (-not (Works $py $mainImports)) {
+  Say "Main app environment (runtime\)"
+  New-Venv $rt
   & $py -m pip install --disable-pip-version-check -r (Join-Path $root "requirements.txt")
-  if ($LASTEXITCODE -ne 0) { Stop-Setup "Some packages did not install. Run Setup.bat again." }
+  if (-not (Works $py $mainImports)) { Stop-Setup "The main app packages did not install. Run Setup.bat again." }
 }
 
-# ---- 3. YarnGPT code --------------------------------------------------------
-$vend = Join-Path $root "vendor\yarngpt"
-if (-not (Test-Path (Join-Path $vend "audiotokenizer.py"))) {
-  Say "Getting the YarnGPT code"
-  New-Item -ItemType Directory -Force $vend | Out-Null
-  $src = @((Join-Path $seed "yarngpt-main"), (Join-Path $seed "yarngpt")) | Where-Object { Test-Path (Join-Path $_ "audiotokenizer.py") } | Select-Object -First 1
-  if (-not $src) {
-    $zip = Join-Path $logDir "yarngpt.zip"
-    curl.exe -L --fail -o $zip https://github.com/saheedniyi02/yarngpt/archive/refs/heads/main.zip
-    Expand-Archive $zip -DestinationPath $logDir -Force
-    $src = Join-Path $logDir "yarngpt-main"
-  }
-  Copy-Item (Join-Path $src "audiotokenizer.py"), (Join-Path $src "__init__.py"), (Join-Path $src "README.md") $vend -Force
-  Copy-Item (Join-Path $src "default_speakers") $vend -Recurse -Force
-  Copy-Item (Join-Path $src "default_speakers_local") $vend -Recurse -Force
+# ---- 2. Which voice engines -------------------------------------------------
+$cbDone = (Works (PyOf (Join-Path $root "envs\chatterbox")) "chatterbox.tts, perth") -and (Test-Path (Join-Path $models "chatterbox\t3_cfg.safetensors"))
+$ovDone = (Works (PyOf (Join-Path $root "envs\openvoice")) "melo, openvoice.api, g2p_en") -and (Test-Path (Join-Path $models "melo\EN\checkpoint.pth")) -and (Test-Path (Join-Path $models "openvoice\converter\checkpoint.pth"))
+$want = @()
+if ($Engines) { $want = $Engines | ForEach-Object { $_.ToLower() } }
+else {
+  Say "Voice engines (each runs on this PC in its own environment)"
+  if ($cbDone) { Write-Host "Chatterbox: already installed" }
+  elseif (Ask "Install Chatterbox (voice cloning; about 5 GB of packages and 3.2 GB of model files)?") { $want += "chatterbox" }
+  if ($ovDone) { Write-Host "OpenVoice v2: already installed" }
+  elseif (Ask "Install OpenVoice v2 with MeloTTS accents (about 5 GB of packages and 0.8 GB of model files)?") { $want += "openvoice" }
 }
 
-# ---- 4. Model files ---------------------------------------------------------
-New-Item -ItemType Directory -Force $models | Out-Null
-$yaml = Join-Path $models $yamlName
-$ckpt = Join-Path $models $ckptName
-if (-not (Test-Path $yaml)) {
-  if (Test-Path (Join-Path $seed "models\$yamlName")) { Copy-Item (Join-Path $seed "models\$yamlName") $yaml }
-  else { Say "Downloading the audio config"; curl.exe -L --fail -o $yaml "https://huggingface.co/novateur/WavTokenizer-medium-speech-75token/resolve/main/$yamlName" }
+# ---- 3. Chatterbox ----------------------------------------------------------
+if (($want -contains "chatterbox") -and (-not $cbDone)) {
+  Say "Chatterbox environment (envs\chatterbox)"
+  $e = Join-Path $root "envs\chatterbox"; $p = PyOf $e
+  New-Venv $e
+  if (-not (Works $p "torch, torchaudio")) { Install-Torch $p }
+  & $p -m pip install --disable-pip-version-check -r (Join-Path $root "requirements-chatterbox.txt")
+  if ($LASTEXITCODE -ne 0) { Stop-Setup "Chatterbox packages did not install. Run Setup.bat again." }
+  & $p -m pip install --disable-pip-version-check --no-deps chatterbox-tts==0.1.7 s3tokenizer==0.3.0
+  if (-not (Works $p "chatterbox.tts, perth")) { Stop-Setup "Chatterbox did not install correctly. See the log." }
+  Say "Chatterbox model files (3.2 GB, one time)"
+  & $p (Join-Path $root "app\workers\fetch_chatterbox.py")
+  if ($LASTEXITCODE -ne 0) { Stop-Setup "The Chatterbox model files did not download. Run Setup.bat again to resume." }
 }
-if (-not (Test-Path $ckpt) -or (Get-Item $ckpt).Length -lt 1700000000) {
-  if (Test-Path (Join-Path $seed "models\$ckptName")) {
-    Say "Copying the audio model that is already on this PC (1.7 GB)"
-    Copy-Item (Join-Path $seed "models\$ckptName") $ckpt -Force
-  } else {
-    Say "Downloading the audio model (1.7 GB, one time)"
-    curl.exe -L --fail -C - -o $ckpt "https://huggingface.co/novateur/WavTokenizer-large-speech-75token/resolve/main/$ckptName"
-    if ($LASTEXITCODE -ne 0) { Stop-Setup "The audio model did not download. Run Setup.bat again to resume." }
-  }
+
+# ---- 4. OpenVoice v2 + MeloTTS ---------------------------------------------
+if (($want -contains "openvoice") -and (-not $ovDone)) {
+  Say "OpenVoice environment (envs\openvoice)"
+  $e = Join-Path $root "envs\openvoice"; $p = PyOf $e
+  New-Venv $e
+  if (-not (Works $p "torch, torchaudio")) { Install-Torch $p }
+  & $p -m pip install --disable-pip-version-check -r (Join-Path $root "requirements-openvoice.txt")
+  if ($LASTEXITCODE -ne 0) { Stop-Setup "OpenVoice packages did not install. Run Setup.bat again." }
+  & $p -m pip install --disable-pip-version-check --no-deps g2p_en==2.1.0 $MELO_SRC $OV_SRC
+  if (-not (Works $p "melo, openvoice.api, g2p_en")) { Stop-Setup "OpenVoice or MeloTTS did not install correctly. See the log." }
+  Say "OpenVoice and MeloTTS model files (0.8 GB, one time)"
+  & $p (Join-Path $root "app\workers\fetch_openvoice.py")
+  if ($LASTEXITCODE -ne 0) { Stop-Setup "The OpenVoice model files did not download. Run Setup.bat again to resume." }
 }
-Say "YarnGPT2 voice model"
-& $py -m app.fetch_model
-if ($LASTEXITCODE -ne 0) { Stop-Setup "The YarnGPT2 model is not in place. Check the internet connection and run Setup.bat again." }
 
 # ---- 5. Desktop shortcut ----------------------------------------------------
 if (-not $NoShortcut) {
@@ -137,9 +141,14 @@ if (-not $NoShortcut) {
   } catch { Write-Host "Could not create the desktop shortcut (not a problem)." -ForegroundColor Yellow }
 }
 
-# ---- 6. Check ---------------------------------------------------------------
-Say "Checking the graphics card"
-& $py -c "import torch; ok=torch.cuda.is_available(); print('GPU ready:', ok, torch.cuda.get_device_name(0) if ok else '(YarnGPT will run on the CPU, slowly)')"
-Write-Host "`nSetup finished. Log: $logDir\setup.log" -ForegroundColor Green
+# ---- 6. Summary -------------------------------------------------------------
+Say "Installed"
+foreach ($n in @("chatterbox", "openvoice")) {
+  $p = PyOf (Join-Path $root "envs\$n")
+  if (Test-Path $p) {
+    & $p -c "import torch; ok=torch.cuda.is_available(); print('  $n : GPU ready' if ok else '  $n : CPU only (slow)', torch.cuda.get_device_name(0) if ok else '')"
+  } else { Write-Host "  $n : not installed (run Setup.bat again to add it)" }
+}
+Write-Host "`nSetup finished. Start the app with the Voice Studio shortcut. Log: $logDir\setup.log" -ForegroundColor Green
 Stop-Transcript | Out-Null
 exit 0

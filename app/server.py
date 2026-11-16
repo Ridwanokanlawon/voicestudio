@@ -29,7 +29,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import audio, engines, safecheck, settings, textproc, updater
+from . import audio, engines, profiles, safecheck, settings, textproc, updater
 from .engines.base import EngineError
 from .paths import ASSETS, DATA, SESSIONS, STATIC, log_dir, new_out_dir, out_root, version
 
@@ -83,7 +83,7 @@ def fail(code, msg):
 
 # ---------------------------------------------------------------- sessions
 SID = re.compile(r"^[0-9a-f]{12}$")
-FNAME = re.compile(r"^s\d{3}_r\d+\.wav$")
+FNAME = re.compile(r"^(s\d{3}_r\d+|cmp_\d)\.wav$")
 
 
 def sdir(sid):
@@ -116,7 +116,7 @@ def public(s):
                     "dur": it.get("dur"), "flag": it.get("flag"), "error": it.get("error"),
                     "url": f"/api/audio/{s['id']}/{it['file']}" if it.get("file") else None})
     return {"id": s["id"], "engine": s["engine"], "engine_kind": s["engine_kind"], "voice": s["voice"],
-            "label": s["label"], "preview": s["preview"], "sentences": out, "final": s.get("final"),
+            "voice_label": s.get("voice_label", s["voice"]), "label": s["label"], "preview": s["preview"], "sentences": out, "final": s.get("final"),
             "merged": s.get("merged", False)}
 
 
@@ -151,9 +151,10 @@ def store_sentence(s, it, index, a, sr, eng):
     if eng.kind == "local":
         a = audio.trim(a, sr)
         flag = glitch_flag(it["text"], a.size / sr)
-        a, ok = audio.stretch(a, s["rate"])
-        if not ok and not flag:
-            flag = "Speed change is unavailable, so this was kept at normal speed."
+        if not eng.native_rate:
+            a, ok = audio.stretch(a, s["rate"])
+            if not ok and not flag:
+                flag = "Speed change is unavailable, so this was kept at normal speed."
         a = audio.fade(a, sr)
     it["rev"] = it.get("rev", 0) + 1
     it["file"] = f"s{index:03d}_r{it['rev']}.wav"
@@ -196,9 +197,10 @@ def assemble(s, eng):
     out = Path(s["out_dir"])
     out.mkdir(parents=True, exist_ok=True)
     s["version"] = s.get("version", 0) + 1
-    stem = f"{s['label']}_{s['engine']}-{s['voice']}" + ("" if s["version"] == 1 else f"_v{s['version']}")
+    vname = re.sub(r"[^A-Za-z0-9_-]+", "", s.get("voice_label", s["voice"]).replace(" ", "-"))[:30] or "voice"
+    stem = f"{s['label']}_{s['engine']}-{vname}" + ("" if s["version"] == 1 else f"_v{s['version']}")
     wav = out / f"{stem}.wav"
-    audio.write_wav(wav, full, audio.TARGET_SR)
+    audio.write_wav(wav, full, audio.TARGET_SR, label=True)
     mp3 = None
     if s.get("mp3") and audio.mp3_available():
         mp3 = out / f"{stem}.mp3"
@@ -210,7 +212,7 @@ def assemble(s, eng):
                   "url": f"/api/sessions/{s['id']}/final?fmt=wav&v={s['version']}"}
     write_history({"id": s["id"], "date": datetime.datetime.now().isoformat(timespec="seconds"),
                    "excerpt": s["text"][:110], "label": s["label"], "engine": eng.name,
-                   "engine_kind": eng.kind, "voice": s["voice"], "wav": str(wav),
+                   "engine_kind": eng.kind, "voice": s.get("voice_label", s["voice"]), "wav": str(wav),
                    "mp3": str(mp3) if mp3 else None, "out_dir": s["out_dir"],
                    "duration": s["final"]["duration"], "sentences": len(sents(s))})
 
@@ -234,20 +236,24 @@ def run_job(job, s, eng, targets, variation):
                 idx = s["items"].index(all_s[i])
                 nxt = s["items"][idx + 1] if idx + 1 < len(s["items"]) else None
                 items.append({"text": all_s[i]["text"], "pause_after": bool(nxt and nxt["type"] == "pause")})
-            chunks, sr = eng.synth_script(items, s["voice"], rate=s["rate"], pause_ms=s["pause_ms"])
+            chunks, sr = eng.synth_script(items, s["voice"], rate=s["rate"], pause_ms=s["pause_ms"],
+                                          params=s.get("params") or {})
             _last_cloud["t"] = time.time()
             for i, a in zip(targets, chunks):
                 store_sentence(s, all_s[i], i, a, sr, eng)
             s["merged"] = any(it.get("state") == "merged" for it in all_s)
             job["done"] = len(targets)
         else:
+            job["message"] = "Loading engine..."
+            engines.ensure_loaded(eng)
             for n, i in enumerate(targets):
                 it = all_s[i]
                 it["state"] = "working"
                 job["current"] = i
                 job["message"] = f"Sentence {n + 1} of {len(targets)}"
                 try:
-                    a, sr = eng.synth(it["text"], s["voice"], rate=s["rate"], variation=variation)
+                    a, sr = eng.synth(it["text"], s["voice"], rate=s["rate"], variation=variation,
+                                      params=s.get("params") or {}, ref=s.get("ref"))
                     store_sentence(s, it, i, a, sr, eng)
                 except EngineError as e:
                     it["state"], it["error"] = "error", str(e)
@@ -319,6 +325,31 @@ class GenBody(BaseModel):
     preview: bool = False
     mp3: bool = False
     label: str = "script"
+    params: dict = {}
+
+
+class CmpChoice(BaseModel):
+    engine: str
+    voice: str
+    params: dict = {}
+
+
+class CmpBody(BaseModel):
+    text: str
+    choices: list[CmpChoice]
+    rate: float = 1.0
+    pause_ms: int = 700
+    gap_ms: int = 150
+
+
+class ProfileCheckBody(BaseModel):
+    b64: str
+
+
+class ProfileBody(BaseModel):
+    token: Optional[str] = None
+    name: str = ""
+    consent: bool = False
 
 
 class RegenBody(BaseModel):
@@ -352,7 +383,9 @@ def state():
                       "region": settings.get_secret("azure_region") or ""},
             "update": {"repo": updater.repo(), "auto_check": p.get("auto_check", True),
                        "token": bool(settings.get_secret("github_token"))},
-            "busy": busy.locked(), "cloud_gap": CLOUD_MIN_GAP}
+            "busy": busy.locked(), "cloud_gap": CLOUD_MIN_GAP,
+            "profiles": {"passage": profiles.PASSAGE, "consent": profiles.CONSENT,
+                         "min_s": profiles.MIN_S, "max_s": profiles.MAX_S}}
 
 
 @app.post("/api/parse")
@@ -384,28 +417,215 @@ def check(b: CheckBody):
             "first": n[0]["text"] if n else ""}
 
 
+def usable(eng):
+    """Local engines load on demand, so only 'not installed' or 'no key' stop a request."""
+    st = eng.status()
+    if st["state"] in ("missing", "unconfigured"):
+        fail(409, f"{eng.name}: {st['detail']}")
+
+
+def resolve_voice(eng, voice):
+    """-> (label for file names and history, reference WAV path or None)"""
+    match = next((v for v in eng.voice_list() if v["id"] == voice), None)
+    if not match:
+        fail(400, "Pick a voice for this engine." if not eng.uses_profiles
+             else "Pick a voice profile for this engine (or create one under Voice profiles).")
+    if voice.startswith("p:"):
+        try:
+            return match["label"], str(profiles.ref_path(voice[2:]))
+        except profiles.ProfileError as e:
+            fail(400, str(e))
+    return match["label"], None
+
+
+def clean_params(eng, given):
+    out = {}
+    for p in eng.params:
+        v = (given or {}).get(p["id"], p["default"])
+        if p["type"] == "range":
+            try:
+                v = min(p["max"], max(p["min"], float(v)))
+            except (TypeError, ValueError):
+                v = p["default"]
+        elif v not in {o["id"] for o in p["options"]}:
+            v = p["default"]
+        out[p["id"]] = v
+    return out
+
+
+def clamp(b):
+    return (min(1.3, max(0.7, b.rate)), min(5000, max(0, b.pause_ms)), min(3000, max(0, b.gap_ms)))
+
+
 @app.post("/api/generate")
 def generate(b: GenBody):
     try:
         eng = engines.get(b.engine)
     except EngineError as e:
         fail(400, str(e))
-    if b.voice not in {v["id"] for v in eng.voices}:
-        fail(400, "Pick a voice for this engine.")
-    st = eng.status()
-    if st["state"] != "ready":
-        fail(409, f"{eng.name} is not ready: {st['detail']}")
+    usable(eng)
+    vlabel, ref = resolve_voice(eng, b.voice)
     items = textproc.split_script(b.text)
     if not any(it["type"] == "s" for it in items):
         fail(400, "There is no text to speak.")
     if b.preview:
         items = [next(it for it in items if it["type"] == "s")]
     label = re.sub(r"[^A-Za-z0-9_-]+", "", b.label)[:40] or "script"
+    rate, pause_ms, gap_ms = clamp(b)
     s = {"id": uuid.uuid4().hex[:12], "created": time.time(), "engine": eng.id, "engine_kind": eng.kind,
-         "voice": b.voice, "rate": min(1.3, max(0.7, b.rate)), "pause_ms": min(5000, max(0, b.pause_ms)),
-         "gap_ms": min(3000, max(0, b.gap_ms)), "preview": b.preview, "mp3": b.mp3, "label": label,
-         "text": textproc.clean(b.text), "items": items}
+         "voice": b.voice, "voice_label": vlabel, "ref": ref, "params": clean_params(eng, b.params),
+         "rate": rate, "pause_ms": pause_ms, "gap_ms": gap_ms, "preview": b.preview, "mp3": b.mp3,
+         "label": label, "text": textproc.clean(b.text), "items": items}
     return start_job(s, eng, list(range(len(sents(s)))))
+
+
+# ---------------------------------------------------------------- A/B compare
+def run_compare(job, b, picks, items, cid):
+    """The first two sentences with up to three engine/voice choices."""
+    try:
+        rate, pause_ms, gap_ms = clamp(b)
+        d = SESSIONS / cid
+        d.mkdir(parents=True, exist_ok=True)
+        for n, (eng, voice, vlabel, ref, params) in enumerate(picks):
+            res = job["results"][n]
+            job["message"] = f"{eng.name}, {vlabel} ({n + 1} of {len(picks)})"
+            try:
+                if eng.kind == "cloud":
+                    _last_cloud["t"] = time.time()
+                    chunks, sr = eng.synth_script(items, voice, rate=rate, pause_ms=pause_ms, params=params)
+                    _last_cloud["t"] = time.time()
+                    full = np.concatenate([audio.mono(c) for c in chunks])
+                else:
+                    job["message"] = f"Loading {eng.name}..."
+                    engines.ensure_loaded(eng)
+                    job["message"] = f"{eng.name}, {vlabel} ({n + 1} of {len(picks)})"
+                    parts = []
+                    for k, it in enumerate(items):
+                        a, sr = eng.synth(it["text"], voice, rate=rate, params=params, ref=ref)
+                        a = audio.trim(audio.mono(a), sr)
+                        if not eng.native_rate:
+                            a, _ = audio.stretch(a, rate)
+                        parts.append(audio.fade(a, sr))
+                        if k + 1 < len(items):
+                            parts.append(audio.silence(pause_ms if it.get("pause_after") else gap_ms, sr))
+                    full = np.concatenate(parts)
+                full, _ = audio.normalize(audio.resample(full, sr, audio.TARGET_SR), audio.TARGET_SR)
+                audio.write_wav(d / f"cmp_{n}.wav", full, audio.TARGET_SR)
+                res.update(state="done", url=f"/api/audio/{cid}/cmp_{n}.wav?t={int(time.time())}",
+                           duration=round(full.size / audio.TARGET_SR, 1))
+            except Exception as e:
+                msg = str(e) if isinstance(e, EngineError) else f"{type(e).__name__}: {e}"
+                log.error("Compare failed for %s: %s\n%s", eng.id, msg, traceback.format_exc())
+                res.update(state="error", error=msg)
+            job["done"] = n + 1
+        job.update(status="done", message="Done")
+    finally:
+        busy.release()
+
+
+@app.post("/api/compare")
+def compare(b: CmpBody):
+    if not 1 <= len(b.choices) <= 3:
+        fail(400, "Choose one to three voices to compare.")
+    sents2 = [it for it in textproc.split_script(b.text)]
+    first, items = [], []
+    for it in sents2:
+        if it["type"] == "pause":
+            if items:
+                items[-1]["pause_after"] = True
+            continue
+        if len(items) == 2:
+            break
+        items.append({"text": it["text"], "pause_after": False})
+    if not items:
+        fail(400, "There is no text to speak.")
+    if len(items) == 2:
+        items[1]["pause_after"] = False
+    picks = []
+    for c in b.choices:
+        try:
+            eng = engines.get(c.engine)
+        except EngineError as e:
+            fail(400, str(e))
+        usable(eng)
+        vlabel, ref = resolve_voice(eng, c.voice)
+        picks.append((eng, c.voice, vlabel, ref, clean_params(eng, c.params)))
+    clouds = [p for p in picks if p[0].kind == "cloud"]
+    if len(clouds) > 1:
+        fail(400, "Cloud safety rule: a comparison can include only one cloud voice, because each click may send only one cloud request.")
+    if clouds:
+        cloud_gate()
+    if not busy.acquire(blocking=False):
+        fail(409, "A generation is already running. Wait for it to finish.")
+    if clouds:
+        _last_cloud["t"] = time.time()
+    job = {"id": uuid.uuid4().hex[:12], "status": "running", "total": len(picks), "done": 0, "message": "Starting",
+           "error": None, "session": None, "text": " ".join(i["text"] for i in items),
+           "results": [{"label": f"{p[0].name}: {p[2]}", "state": "pending"} for p in picks]}
+    jobs[job["id"]] = job
+    threading.Thread(target=run_compare, args=(job, b, picks, items, uuid.uuid4().hex[:12]), daemon=True).start()
+    return job
+
+
+# ---------------------------------------------------------------- engines and voice profiles
+@app.post("/api/engines/{eid}/activate")
+def activate(eid: str):
+    try:
+        eng = engines.get(eid)
+    except EngineError as e:
+        fail(404, str(e))
+    if eng.kind == "local" and not busy.locked() and eng.status()["state"] in ("idle", "error"):
+        engines.activate_async(eng)
+    return eng.status()
+
+
+@app.get("/api/profiles")
+def profile_list():
+    return profiles.all_profiles()
+
+
+@app.post("/api/profiles/check")
+def profile_check(b: ProfileCheckBody):
+    raw = base64.b64decode(b.b64)
+    if len(raw) > 60_000_000:
+        fail(413, "That recording is too large. Keep it between 10 and 30 seconds.")
+    try:
+        return profiles.check_upload(raw)
+    except profiles.ProfileError as e:
+        fail(400, str(e))
+
+
+@app.post("/api/profiles")
+def profile_create(b: ProfileBody):
+    try:
+        return profiles.create(b.token, b.name, b.consent)
+    except profiles.ProfileError as e:
+        fail(400, str(e))
+
+
+@app.patch("/api/profiles/{pid}")
+def profile_rename(pid: str, b: ProfileBody):
+    try:
+        return profiles.rename(pid, b.name)
+    except profiles.ProfileError as e:
+        fail(400, str(e))
+
+
+@app.delete("/api/profiles/{pid}")
+def profile_delete(pid: str):
+    try:
+        profiles.delete(pid)
+    except profiles.ProfileError as e:
+        fail(404, str(e))
+    return {"deleted": True}
+
+
+@app.get("/api/profiles/{pid}/audio")
+def profile_audio(pid: str):
+    try:
+        return FileResponse(profiles.ref_path(pid), media_type="audio/wav")
+    except profiles.ProfileError as e:
+        fail(404, str(e))
 
 
 @app.get("/api/jobs/{jid}")
@@ -426,6 +646,9 @@ def regenerate(sid: str, b: RegenBody):
         fail(409, "This take came back as one piece, so single sentences cannot be redone. Generate again.")
     if b.text is not None and b.text.strip():
         all_s[b.index]["text"] = textproc.clean(b.text)
+    usable(eng)
+    if s.get("ref") and not os.path.exists(s["ref"]):
+        fail(409, "The voice profile used for this take has been deleted, so it cannot be redone.")
     all_s[b.index]["state"] = "pending"
     return start_job(s, eng, [b.index], variation=True)
 
@@ -541,7 +764,10 @@ def update_apply():
 
 @app.post("/api/quit")
 def quit_app():
-    threading.Timer(0.4, lambda: os._exit(0)).start()
+    def stop():
+        engines.shutdown()
+        os._exit(0)
+    threading.Timer(0.4, stop).start()
     return {"bye": True}
 
 
@@ -551,14 +777,17 @@ if ASSETS.exists():
 
 
 def clear_previews():
-    """Preview takes are throwaway: remove the ones left from earlier runs."""
+    """Preview takes and A/B comparisons are throwaway: remove the ones left
+    from earlier runs, plus any temporary worker files."""
     import shutil
     for d in SESSIONS.iterdir():
         try:
-            if json.loads((d / "session.json").read_text(encoding="utf-8")).get("preview"):
+            f = d / "session.json"
+            if not f.exists() or json.loads(f.read_text(encoding="utf-8")).get("preview"):
                 shutil.rmtree(d, ignore_errors=True)
         except Exception:
             pass
+    shutil.rmtree(DATA / "tmp", ignore_errors=True)
 
 
 class _Tee:
@@ -615,15 +844,9 @@ def main():
     engines.discover()
     clear_previews()
 
-    def warm():
-        for e in engines.all_engines():
-            try:
-                log.info("Loading engine %s", e.id)
-                e.load()
-                log.info("Engine %s: %s", e.id, e.status())
-            except Exception:
-                log.exception("Engine %s failed to load", e.id)
-    threading.Thread(target=warm, daemon=True).start()
+    import atexit
+    atexit.register(engines.shutdown)
+    log.info("Engines: %s", {e.id: e.status()["state"] for e in engines.all_engines()})
     if os.environ.get("VOICESTUDIO_NO_BROWSER") != "1":
         threading.Timer(1.2, lambda: webbrowser.open(url)).start()
     import uvicorn

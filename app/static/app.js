@@ -1,7 +1,7 @@
 "use strict";
 const $ = (id) => document.getElementById(id);
 const S = { engines: [], engine: null, voice: {}, session: null, job: null, episodes: [], label: "script",
-            peaks: null, lastCloud: 0, cloudGap: 3, playing: null };
+            peaks: null, lastCloud: 0, cloudGap: 3, playing: null, params: {}, prof: null, cmp: [] };
 
 async function api(path, opts = {}) {
   const o = { method: opts.method || (opts.body ? "POST" : "GET"), headers: {} };
@@ -34,37 +34,73 @@ $("themeBtn").onclick = () => setTheme(document.documentElement.dataset.theme ==
 
 /* ---------- engines and voices ---------- */
 function currentEngine() { return S.engines.find((e) => e.id === S.engine); }
+const STATE_TEXT = { ready: "Ready. ", loading: "", idle: "", missing: "", unconfigured: "", error: "Problem: " };
+function activate(id) { return api(`/api/engines/${id}/activate`, { method: "POST" }).then(() => refresh()).catch(() => {}); }
 function renderEngines() {
   const box = $("engines"); box.replaceChildren();
   for (const e of S.engines) {
-    const ready = e.status.state === "ready";
     const radio = el("input", { type: "radio", name: "engine", value: e.id });
     radio.checked = e.id === S.engine;
     const row = el("label", { class: "engine" + (e.id === S.engine ? " sel" : "") }, radio,
       el("span", { class: "name", text: e.name }),
       el("span", { class: "badge " + (e.kind === "cloud" ? "cloud" : "local"), text: e.badge }),
-      el("span", { class: "st" + (e.status.state === "error" ? " bad" : ""),
-                   text: (ready ? "Ready. " : e.status.state === "loading" ? "Loading. " : "") + (e.status.detail || "") }));
-    radio.onchange = () => { S.engine = e.id; store.set("vs-engine", e.id); renderEngines(); renderVoices(); syncControls(); };
+      el("span", { class: "st" + (e.status.state === "error" || e.status.state === "missing" ? " bad" : ""),
+                   text: (STATE_TEXT[e.status.state] || "") + (e.status.detail || "") }));
+    radio.onchange = () => { S.engine = e.id; store.set("vs-engine", e.id); renderEngines(); renderVoices(); renderParams(); syncControls();
+      if (e.kind === "local" && ["idle", "error"].includes(e.status.state)) activate(e.id); };
     box.append(row);
   }
-  const yarn = S.engines.find((e) => e.kind === "local") || S.engines[0];
-  const pill = $("enginePill");
-  if (yarn) {
-    pill.textContent = `${yarn.name}: ${yarn.status.state === "ready" ? yarn.status.detail || "ready" : yarn.status.state}`;
-    pill.className = "pill " + (yarn.status.state === "ready" ? "ok" : yarn.status.state === "error" ? "bad" : "");
+  const cur = currentEngine(), pill = $("enginePill");
+  if (cur) {
+    const st = cur.status.state;
+    pill.textContent = `${cur.name}: ${st === "ready" ? cur.status.detail || "ready" : st === "loading" ? "Loading engine..." : st === "idle" ? "not loaded" : st === "missing" ? "not installed" : st === "unconfigured" ? "needs a key" : "problem"}`;
+    pill.className = "pill " + (st === "ready" ? "ok" : st === "error" || st === "missing" ? "bad" : "");
   }
 }
 function renderVoices() {
   const e = currentEngine(), box = $("voices"); box.replaceChildren();
   if (!e) return;
-  if (!S.voice[e.id]) S.voice[e.id] = store.get("vs-voice-" + e.id) || e.voices[0].id;
+  const ids = e.voices.map((v) => v.id);
+  const saved = S.voice[e.id] || store.get("vs-voice-" + e.id);
+  S.voice[e.id] = ids.includes(saved) ? saved : ids[0];
   for (const v of e.voices) {
     box.append(el("button", { class: "voice" + (S.voice[e.id] === v.id ? " sel" : ""), type: "button",
       onclick: () => { S.voice[e.id] = v.id; store.set("vs-voice-" + e.id, v.id); renderVoices(); } },
       document.createTextNode(v.label), el("small", { text: v.note || "" })));
   }
+  $("noProfiles").hidden = !(e.uses_profiles && !ids.some((i) => i.startsWith("p:")));
 }
+function paramValues(e) {
+  if (!S.params[e.id]) { try { S.params[e.id] = JSON.parse(store.get("vs-params-" + e.id) || "{}"); } catch (x) { S.params[e.id] = {}; } }
+  const out = {};
+  for (const p of e.params) out[p.id] = S.params[e.id][p.id] != null ? S.params[e.id][p.id] : p.default;
+  return out;
+}
+function setParam(e, id, v) { paramValues(e); S.params[e.id][id] = v; store.set("vs-params-" + e.id, JSON.stringify(S.params[e.id])); }
+function renderParams() {
+  const e = currentEngine(), list = $("paramList"); list.replaceChildren();
+  $("params").hidden = !e || !e.params.length;
+  if (!e) return;
+  const vals = paramValues(e);
+  $("paramsReset").hidden = !e.params.some((p) => p.type === "range");
+  for (const p of e.params) {
+    if (p.type === "range") {
+      const out = el("output", { text: (+vals[p.id]).toFixed(2) });
+      const inp = el("input", { type: "range", min: p.min, max: p.max, step: p.step, value: vals[p.id], "aria-label": p.label });
+      inp.oninput = () => { out.textContent = (+inp.value).toFixed(2); setParam(e, p.id, +inp.value); };
+      list.append(el("div", { class: "slider" }, el("div", { class: "label" }, el("span", { text: p.label }), out), inp,
+        p.hint ? el("p", { class: "hint", text: p.hint }) : null));
+    } else {
+      const sel = el("select", { "aria-label": p.label });
+      for (const o of p.options) sel.append(el("option", { value: o.id, text: o.label }));
+      sel.value = vals[p.id]; sel.onchange = () => { setParam(e, p.id, sel.value); renderCompare(); };
+      list.append(el("div", { class: "slider" }, el("div", { class: "label" }, el("span", { text: p.label })), sel));
+    }
+  }
+}
+$("paramsReset").onclick = () => { const e = currentEngine(); if (!e) return;
+  for (const p of e.params) if (p.type === "range") setParam(e, p.id, p.default); renderParams(); };
+$("noProfilesBtn").onclick = () => openProfiles();
 function syncControls() {
   const e = currentEngine(); if (!e) return;
   const cloud = e.kind === "cloud";
@@ -72,8 +108,9 @@ function syncControls() {
   $("gapWrap").hidden = cloud;
   const note = $("cloudNote"); note.hidden = !cloud;
   note.textContent = cloud ? `Cloud safety rules: one request per click, no retries, at least ${S.cloudGap} seconds between requests, and a voice-safe check before sending.` : "";
-  const ready = e.status.state === "ready";
-  $("genBtn").disabled = $("previewBtn").disabled = !ready || !!S.job;
+  const usable = !["missing", "unconfigured"].includes(e.status.state);
+  $("genBtn").disabled = $("previewBtn").disabled = $("cmpBtn").disabled = !usable || !!S.job;
+  $("cmpBtn").disabled = !!S.job;
   runCheck();
 }
 for (const [id, out, unit] of [["rate", "rateOut", "%"], ["pause", "pauseOut", " ms"], ["gap", "gapOut", " ms"]]) {
@@ -193,7 +230,7 @@ async function generate(preview) {
   try {
     const job = await api("/api/generate", { body: {
       text, engine: e.id, voice: S.voice[e.id], rate: +$("rate").value, pause_ms: +$("pause").value,
-      gap_ms: +$("gap").value, preview, mp3: $("mp3").checked, label: S.label } });
+      gap_ms: +$("gap").value, preview, mp3: $("mp3").checked, label: S.label, params: paramValues(e) } });
     watch(job, preview);
   } catch (err) { showError(err.message); }
 }
@@ -210,7 +247,7 @@ function watch(job, preview) {
     $("progText").textContent = j.message || "";
     if (!preview && j.session) { S.session = j.session; renderSession(j.current); }
     if (j.status === "running") return setTimeout(tick, 500);
-    S.job = null; $("progress").hidden = true; syncControls();
+    S.job = null; $("progress").hidden = true; syncControls(); refresh().catch(() => {});
     if (j.status === "error") showError(j.error);
     else if (j.message && j.message !== "Done") showError(j.message);
     if (preview && j.session && j.session.sentences[0] && j.session.sentences[0].url) {
@@ -399,6 +436,184 @@ $("upApply").onclick = async () => {
   catch (e) { upMsg(e.message); }
 };
 
+/* ---------- A/B compare ---------- */
+function renderCompare() {
+  const box = $("cmpRows"); if (!box) return;
+  if (!S.cmp.length) { try { S.cmp = JSON.parse(store.get("vs-cmp") || "[]"); } catch (x) { S.cmp = []; } }
+  while (S.cmp.length < 3) S.cmp.push({ engine: "", voice: "", opt: "" });
+  box.replaceChildren();
+  S.cmp.forEach((row, i) => {
+    const eSel = el("select", { "aria-label": `Compare ${i + 1} engine` }, el("option", { value: "", text: i ? "None" : "Choose engine" }));
+    for (const e of S.engines) if (!["missing", "unconfigured"].includes(e.status.state)) eSel.append(el("option", { value: e.id, text: e.name }));
+    const e = S.engines.find((x) => x.id === row.engine && eSel.querySelector(`option[value="${x.id}"]`));
+    eSel.value = e ? e.id : ""; if (!e) row.engine = "";
+    const vSel = el("select", { "aria-label": `Compare ${i + 1} voice` }), oSel = el("select", { "aria-label": `Compare ${i + 1} option` });
+    const selParam = e && e.params.find((p) => p.type === "select");
+    if (e) {
+      for (const v of e.voices) vSel.append(el("option", { value: v.id, text: v.label }));
+      if (!e.voices.some((v) => v.id === row.voice)) row.voice = e.voices[0] ? e.voices[0].id : "";
+      vSel.value = row.voice;
+      if (selParam) {
+        for (const o of selParam.options) oSel.append(el("option", { value: o.id, text: o.label }));
+        if (!selParam.options.some((o) => o.id === row.opt)) row.opt = paramValues(e)[selParam.id];
+        oSel.value = row.opt;
+      }
+    }
+    vSel.disabled = !e; oSel.disabled = !selParam; if (!selParam) oSel.append(el("option", { text: e ? "No extra option" : "" }));
+    const save = () => store.set("vs-cmp", JSON.stringify(S.cmp));
+    eSel.onchange = () => { row.engine = eSel.value; row.voice = ""; row.opt = ""; save(); renderCompare(); };
+    vSel.onchange = () => { row.voice = vSel.value; save(); };
+    oSel.onchange = () => { row.opt = oSel.value; save(); };
+    box.append(el("div", { class: "cmp-row" }, el("span", { class: "n", text: "ABC"[i] }), eSel, vSel, oSel));
+  });
+}
+$("cmpBtn").onclick = async () => {
+  if (S.job) return;
+  const msg = (t) => { $("cmpMsg").textContent = t || ""; };
+  const text = $("script").value;
+  if (!text.trim()) return msg("Add some text first.");
+  const choices = [];
+  for (const row of S.cmp) {
+    const e = S.engines.find((x) => x.id === row.engine); if (!e || !row.voice) continue;
+    const params = paramValues(e), sp = e.params.find((p) => p.type === "select");
+    if (sp && row.opt) params[sp.id] = row.opt;
+    choices.push({ engine: e.id, voice: row.voice, params, cloud: e.kind === "cloud" });
+  }
+  if (!choices.length) return msg("Choose at least one engine and voice.");
+  if (choices.some((c) => c.cloud)) {
+    clearTimeout(checkTimer); const r = await doCheck();
+    const w = r.warnings.filter((x) => x.index < 2);
+    if (w.length && !(await confirmCloud(w))) return;
+  }
+  try {
+    const job = await api("/api/compare", { body: { text, choices, rate: +$("rate").value, pause_ms: +$("pause").value, gap_ms: +$("gap").value } });
+    S.job = job.id; syncControls(); $("cmpResults").replaceChildren();
+    const tick = async () => {
+      let j; try { j = await api("/api/jobs/" + job.id); } catch (e) { j = { status: "error", message: e.message, results: [] }; }
+      msg(j.status === "running" ? j.message : j.status === "error" ? j.message : `Compared: "${j.text}"`);
+      const box = $("cmpResults"); box.replaceChildren();
+      (j.results || []).forEach((r, i) => {
+        const right = r.state === "done" ? el("audio", { controls: "", src: r.url, preload: "auto" })
+          : el("span", { class: r.state === "error" ? "error" : "hint", text: r.state === "error" ? r.error : "Waiting" });
+        box.append(el("div", { class: "cmp-res" }, el("div", {}, el("b", { text: "ABC"[i] + "  " }), document.createTextNode(r.label)), right));
+      });
+      if (j.status === "running") return setTimeout(tick, 700);
+      S.job = null; syncControls(); refresh().catch(() => {});
+    };
+    tick();
+  } catch (e) { msg(e.message); }
+};
+
+/* ---------- voice profiles ---------- */
+const REC = { ctx: null, stream: null, node: null, src: null, chunks: [], t0: 0, timer: null, token: null, url: null };
+const profMsg = (t) => { const e = $("profMsg"); e.textContent = t || ""; e.hidden = !t; };
+function openProfiles() { $("passage").textContent = S.prof.passage; $("consentText").textContent = S.prof.consent; resetRec(); loadProfiles(); $("profilesDlg").showModal(); }
+$("profilesBtn").onclick = openProfiles;
+$("profClose").onclick = () => { stopRec(true); $("profilesDlg").close(); };
+$("profilesDlg").addEventListener("close", () => stopRec(true));
+async function loadProfiles() {
+  const rows = await api("/api/profiles"), box = $("profList"); box.replaceChildren();
+  if (!rows.length) box.append(el("p", { class: "hint", text: "No voice profiles yet." }));
+  for (const p of rows) {
+    const audio = el("audio", { controls: "", preload: "none", src: `/api/profiles/${p.id}/audio` });
+    box.append(el("div", { class: "h-row" },
+      el("div", {}, el("div", { class: "ex", text: p.name }), el("div", { class: "when", text: `${new Date(p.created).toLocaleDateString([], { dateStyle: "medium" })}, ${p.duration}s` })),
+      audio,
+      el("div", { class: "row" },
+        el("button", { class: "btn small", type: "button", text: "Rename", onclick: async () => {
+          const name = prompt("New name for this voice profile", p.name); if (!name) return;
+          try { await api(`/api/profiles/${p.id}`, { method: "PATCH", body: { name } }); loadProfiles(); refresh(); } catch (e) { profMsg(e.message); } } }),
+        el("button", { class: "btn small ghost", type: "button", text: "Delete", onclick: async () => {
+          if (!confirm(`Delete the voice profile "${p.name}" and its recording? This cannot be undone.`)) return;
+          try { await api(`/api/profiles/${p.id}`, { method: "DELETE" }); loadProfiles(); refresh(); } catch (e) { profMsg(e.message); } } }))));
+  }
+}
+function resetRec() {
+  REC.token = null; $("recSave").hidden = true; $("recReport").hidden = true; $("recTime").textContent = ""; $("meterWrap").hidden = true;
+  $("profConsent").checked = false; $("profSave").disabled = true; $("recBtn").textContent = "Record"; profMsg("");
+}
+function wavBlob(chunks, sr) {
+  const n = chunks.reduce((a, c) => a + c.length, 0), buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
+  const w = (o, t) => { for (let i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i)); };
+  w(0, "RIFF"); v.setUint32(4, 36 + n * 2, true); w(8, "WAVEfmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, sr, true); v.setUint32(28, sr * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, "data"); v.setUint32(40, n * 2, true);
+  let o = 44; for (const c of chunks) for (let i = 0; i < c.length; i++, o += 2) { const x = Math.max(-1, Math.min(1, c[i])); v.setInt16(o, x < 0 ? x * 0x8000 : x * 0x7FFF, true); }
+  return new Blob([buf], { type: "audio/wav" });
+}
+async function blobB64(blob) {
+  const buf = new Uint8Array(await blob.arrayBuffer()); let bin = "";
+  for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+async function startRec() {
+  resetRec();
+  try {
+    REC.stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+  } catch (e) { return profMsg("The microphone could not be opened. Allow microphone access for this page in the browser, and check that a microphone is connected."); }
+  REC.ctx = new (window.AudioContext || window.webkitAudioContext)();
+  REC.src = REC.ctx.createMediaStreamSource(REC.stream);
+  REC.node = REC.ctx.createScriptProcessor(4096, 1, 1);
+  REC.chunks = []; REC.t0 = Date.now();
+  REC.node.onaudioprocess = (ev) => {
+    const d = ev.inputBuffer.getChannelData(0); REC.chunks.push(new Float32Array(d));
+    let m = 0; for (let i = 0; i < d.length; i += 16) m = Math.max(m, Math.abs(d[i]));
+    const bar = $("meter"); bar.style.width = Math.min(100, m * 100) + "%"; bar.classList.toggle("hot", m > 0.97);
+  };
+  REC.src.connect(REC.node); REC.node.connect(REC.ctx.destination);
+  $("recBtn").textContent = "Stop"; $("meterWrap").hidden = false; $("recTime").classList.add("live");
+  REC.timer = setInterval(() => {
+    const s = (Date.now() - REC.t0) / 1000; $("recTime").textContent = `Recording ${s.toFixed(0)}s (aim for about 20)`;
+    if (s >= 40) stopRec(false);
+  }, 250);
+}
+async function stopRec(discard) {
+  if (!REC.ctx) return;
+  clearInterval(REC.timer); $("recTime").classList.remove("live");
+  const sr = REC.ctx.sampleRate, chunks = REC.chunks;
+  try { REC.node.disconnect(); REC.src.disconnect(); REC.stream.getTracks().forEach((t) => t.stop()); await REC.ctx.close(); } catch (e) { /* already closed */ }
+  REC.ctx = null; $("recBtn").textContent = "Record"; $("meterWrap").hidden = true;
+  if (!discard) await checkTake(wavBlob(chunks, sr));
+}
+$("recBtn").onclick = () => (REC.ctx ? stopRec(false) : startRec());
+$("recAgain").onclick = () => startRec();
+$("importBtn").onclick = () => $("importIn").click();
+$("importIn").onchange = async (ev) => {
+  const f = ev.target.files[0]; ev.target.value = ""; if (!f) return;
+  resetRec();
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const ab = await ctx.decodeAudioData(await f.arrayBuffer()); ctx.close();
+    const mono = new Float32Array(ab.length);
+    for (let c = 0; c < ab.numberOfChannels; c++) { const d = ab.getChannelData(c); for (let i = 0; i < d.length; i++) mono[i] += d[i] / ab.numberOfChannels; }
+    await checkTake(wavBlob([mono], ab.sampleRate));
+  } catch (e) { profMsg("That file could not be read. Use a WAV or MP3 recording of your own voice."); }
+};
+async function checkTake(blob) {
+  $("recTime").textContent = "Checking the recording";
+  try {
+    const r = await api("/api/profiles/check", { body: { b64: await blobB64(blob) } });
+    const box = $("recReport"); box.replaceChildren(); box.hidden = false;
+    $("recTime").textContent = `${r.duration}s of speech`;
+    if (r.ok) {
+      box.append(el("div", { class: "item good" }, el("b", { text: "Good recording" }),
+        el("span", { text: ` ${r.duration} seconds of speech, no clipping, low background noise.` + (r.trimmed_s > 0.2 ? ` ${r.trimmed_s}s of silence was trimmed from the ends.` : "") })));
+      REC.token = r.token; if (REC.url) URL.revokeObjectURL(REC.url); REC.url = URL.createObjectURL(blob);
+      $("recAudio").src = REC.url; $("recSave").hidden = false;
+    } else {
+      for (const pr of r.problems) box.append(el("div", { class: "item" }, el("b", { text: "Please record again" }), el("q", { text: pr })));
+      box.append(el("button", { class: "btn", type: "button", text: "Record again", onclick: startRec }));
+    }
+  } catch (e) { profMsg(e.message); $("recTime").textContent = ""; }
+}
+const saveReady = () => { $("profSave").disabled = !($("profConsent").checked && $("profName").value.trim() && REC.token); };
+$("profConsent").onchange = saveReady; $("profName").oninput = saveReady;
+$("profSave").onclick = async () => {
+  try {
+    await api("/api/profiles", { body: { token: REC.token, name: $("profName").value, consent: $("profConsent").checked } });
+    $("profName").value = ""; resetRec(); await loadProfiles(); await refresh();
+  } catch (e) { profMsg(e.message); }
+};
+
 /* ---------- startup ---------- */
 async function refresh() {
   const st = await api("/api/state");
@@ -413,13 +628,19 @@ async function refresh() {
   if (document.activeElement !== $("upRepo")) $("upRepo").value = st.update.repo;
   $("upAuto").checked = st.update.auto_check;
   $("about").textContent = `Voice Studio ${st.version}. Runs on this PC at 127.0.0.1 only. Output folder: ${st.out_root}. ` +
-    "No analytics or telemetry. The only network calls are Azure requests you start and the update check above.";
-  renderEngines(); renderVoices(); syncControls();
+    "No analytics or telemetry. The only network calls are Azure requests you start and the update check above. Voice profiles stay on this PC.";
+  S.prof = st.profiles;
+  renderEngines(); renderVoices(); renderParams(); syncControls(); renderCompare();
   return st;
 }
 (async function init() {
   setTheme(store.get("vs-theme") || "dark");
-  try { await refresh(); await loadHistory(); } catch (e) { showError("Cannot reach the Voice Studio server. Is it still running?"); }
-  setInterval(() => { if (S.engines.some((e) => e.status.state === "loading")) refresh().catch(() => {}); }, 2500);
+  try {
+    await refresh(); await loadHistory();
+    const e = currentEngine();
+    if (e && e.kind === "local" && e.status.state === "idle") activate(e.id);
+  } catch (e) { showError("Cannot reach the Voice Studio server. Is it still running?"); }
+  setInterval(() => { const c = currentEngine();
+    if (!S.job && (S.engines.some((e) => e.status.state === "loading") || (c && c.kind === "local" && c.status.state === "idle"))) refresh().catch(() => {}); }, 2000);
   checkUpdate(false);
 })();

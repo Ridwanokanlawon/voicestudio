@@ -22,9 +22,9 @@ from . import settings
 from .paths import DATA, ROOT, stamp, version
 
 CONFIG = ROOT / "update.json"
-UPDATABLE = ["app", "vendor", "assets", "Setup.bat", "setup.ps1", "Voice Studio.bat",
-             "Make Share Zip.bat", "make_share_zip.ps1", "requirements.txt", "README.md",
-             "THIRD_PARTY.md", "VERSION", ".gitignore"]
+UPDATABLE = ["app", "assets", "Setup.bat", "setup.ps1", "Voice Studio.bat",
+             "Make Share Zip.bat", "make_share_zip.ps1", "requirements.txt", "requirements-chatterbox.txt",
+             "requirements-openvoice.txt", "README.md", "LICENSES.md", "VERSION", ".gitignore"]
 REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _cache = {"at": 0, "result": None}
 
@@ -132,4 +132,4 @@ def apply() -> dict:
     shutil.rmtree(tmp, ignore_errors=True)
     _cache["at"] = 0
     return {"updated": True, "from": info["current"], "to": info["latest"], "backup": str(backup),
-            "packages": pip, "message": f"Updated to {info['latest']}. Close Voice Studio and start it again."}
+            "packages": pip, "message": f"Updated to {info['latest']}. Close Voice Studio, run Setup.bat once (it only installs what changed), then start it again."}

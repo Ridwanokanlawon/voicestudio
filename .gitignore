@@ -1,5 +1,6 @@
-# never publish: the Python runtime, model weights, personal data, scripts, builds
+# never publish: Python environments, model weights, personal data (voice profiles, history), scripts, builds
 runtime/
+envs/
 models/
 data/
 dist/
@@ -9,4 +10,5 @@ __pycache__/
 *.wav
 *.mp3
 *.ckpt
+*.pth
 *.safetensors

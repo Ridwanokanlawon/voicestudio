@@ -1,17 +1,13 @@
-# torch and torchaudio are installed by setup.ps1 (GPU or CPU build as fits the PC)
-transformers==4.52.3
-outetts==0.4.4
-uroman
-inflect
-numpy
-librosa
-soundfile
-soxr
-pyloudnorm
-huggingface_hub
-azure-cognitiveservices-speech
-# added for Voice Studio
+# Main app environment (runtime\). Small on purpose: the voice engines live in
+# their own environments under envs\ (see requirements-chatterbox.txt and
+# requirements-openvoice.txt), so their package versions never clash.
 fastapi
 uvicorn
 keyring
 lameenc
+numpy
+soundfile
+soxr
+pyloudnorm
+librosa
+azure-cognitiveservices-speech

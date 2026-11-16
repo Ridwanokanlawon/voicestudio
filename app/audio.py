@@ -112,9 +112,17 @@ def normalize(a: np.ndarray, sr: int, target: float = TARGET_LUFS):
     return out.astype(np.float32), info
 
 
-def write_wav(path, a: np.ndarray, sr: int):
+AI_LABEL = "AI-generated voice"
+
+
+def write_wav(path, a: np.ndarray, sr: int, label: bool = False):
+    """label=True adds 'AI-generated voice' to the file's metadata (exports)."""
     import soundfile as sf
-    sf.write(str(path), np.clip(a, -1, 1), sr, subtype="PCM_16")
+    with sf.SoundFile(str(path), "w", samplerate=sr, channels=1, subtype="PCM_16") as f:
+        if label:
+            f.comment = AI_LABEL
+            f.software = "Voice Studio"
+        f.write(np.clip(a, -1, 1))
 
 
 def read_wav(path):
@@ -133,7 +141,19 @@ def write_mp3(path, a: np.ndarray, sr: int, kbps: int = 192):
     pcm = (np.clip(a, -1, 1) * 32767).astype("<i2").tobytes()
     data = enc.encode(pcm) + enc.flush()
     with open(path, "wb") as f:
-        f.write(data)
+        f.write(_id3(AI_LABEL) + data)
+
+
+def _id3(text: str) -> bytes:
+    """Minimal ID3v2.3 tag carrying the AI label as a comment and a custom field."""
+    def frame(fid, payload):
+        return fid + len(payload).to_bytes(4, "big") + b"\x00\x00" + payload
+    t = text.encode("latin-1")
+    body = (frame(b"COMM", b"\x00eng\x00" + t) + frame(b"TXXX", b"\x00Disclosure\x00" + t)
+            + frame(b"TSSE", b"\x00Voice Studio"))
+    n = len(body)
+    size = bytes([(n >> 21) & 0x7F, (n >> 14) & 0x7F, (n >> 7) & 0x7F, n & 0x7F])
+    return b"ID3\x03\x00\x00" + size + body
 
 
 def mp3_available() -> bool:

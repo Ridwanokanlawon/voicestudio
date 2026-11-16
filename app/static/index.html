@@ -16,6 +16,7 @@
     <button id="themeBtn" class="icon-btn" title="Switch light and dark" aria-label="Switch light and dark">
       <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 3a9 9 0 1 0 9 9c0-.5 0-.9-.1-1.4A6.5 6.5 0 0 1 12.4 3H12z"/></svg>
     </button>
+    <button id="profilesBtn" class="btn ghost">Voice profiles</button>
     <button id="settingsBtn" class="btn ghost">Settings</button>
     <button id="quitBtn" class="btn ghost" title="Stop Voice Studio">Quit</button>
   </div>
@@ -45,6 +46,11 @@
       <div id="engines" class="engines"></div>
       <div class="label">Voice</div>
       <div id="voices" class="voices"></div>
+      <p id="noProfiles" class="hint" hidden>This engine speaks in your own voice. <button id="noProfilesBtn" class="btn small" type="button">Create voice profile</button></p>
+      <div id="params" hidden>
+        <div class="label"><span>Engine controls</span><button id="paramsReset" class="btn small ghost" type="button">Reset</button></div>
+        <div id="paramList"></div>
+      </div>
 
       <div class="slider"><div class="label"><span>Speaking rate</span><output id="rateOut">100%</output></div>
         <input id="rate" type="range" min="0.8" max="1.2" step="0.01" value="1"><p class="hint" id="rateNote"></p></div>
@@ -64,6 +70,15 @@
       <div id="previewBox" class="preview" hidden><span>Preview</span><audio id="previewAudio" controls></audio></div>
       <p id="formError" class="error" hidden></p>
     </div>
+  </section>
+
+  <section class="card" id="cmpCard">
+    <div class="card-head"><h2>A/B compare</h2>
+      <button id="cmpBtn" class="btn">Compare first two sentences</button></div>
+    <p class="hint">Hear the start of the script in up to three voices before generating the whole thing. Local engines load one after another, so this takes a moment. Only one cloud voice per comparison.</p>
+    <div id="cmpRows" class="cmp-rows"></div>
+    <p id="cmpMsg" class="hint"></p>
+    <div id="cmpResults" class="cmp-results"></div>
   </section>
 
   <section class="card" id="resultCard" hidden>
@@ -125,6 +140,34 @@
     <h3>About</h3>
     <p class="hint" id="about"></p>
   </form>
+</dialog>
+
+<dialog id="profilesDlg" class="wide">
+  <div class="dlg">
+    <div class="card-head"><h2>Voice profiles</h2><button id="profClose" class="btn ghost" type="button">Close</button></div>
+    <p class="hint">A profile is a short recording that Chatterbox and OpenVoice use to speak in that voice. Profiles stay on this PC. Use them only for your own voice, or a voice you have written permission to use.</p>
+    <div id="profList" class="history"></div>
+
+    <h3>Create voice profile</h3>
+    <p class="hint">Read this passage in your normal speaking voice, in a quiet room, about a hand's width from the microphone (about 20 seconds):</p>
+    <blockquote id="passage" class="passage"></blockquote>
+    <div class="row">
+      <button id="recBtn" class="btn primary" type="button">Record</button>
+      <button id="importBtn" class="btn" type="button">Import my recording (WAV or MP3)</button>
+      <input id="importIn" type="file" accept=".wav,.mp3,audio/wav,audio/mpeg" hidden>
+      <span id="recTime" class="rec-time"></span>
+    </div>
+    <div class="meter" id="meterWrap" hidden><i id="meter"></i></div>
+    <div id="recReport" class="safe" hidden></div>
+    <div id="recSave" hidden>
+      <audio id="recAudio" controls></audio>
+      <div class="field"><label for="profName">Name</label><input id="profName" type="text" maxlength="40" placeholder="for example My voice"></div>
+      <label class="check"><input id="profConsent" type="checkbox"> <span id="consentText"></span></label>
+      <div class="row"><button id="profSave" class="btn primary" type="button" disabled>Save profile</button>
+        <button id="recAgain" class="btn" type="button">Record again</button></div>
+    </div>
+    <p id="profMsg" class="error" hidden></p>
+  </div>
 </dialog>
 
 <dialog id="safeDlg">

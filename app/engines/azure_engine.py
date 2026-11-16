@@ -12,7 +12,13 @@ import numpy as np
 from .. import settings
 from .base import Engine, EngineError
 
-VOICES = {"abeo": "en-NG-AbeoNeural", "ezinne": "en-NG-EzinneNeural"}
+# hd=True: Dragon HD voices accept only a small part of SSML (no speaking rate,
+# no sentence bookmarks), so they are sent plainly and come back as one piece.
+VOICES = {
+    "abeo": {"name": "en-NG-AbeoNeural", "lang": "en-NG", "hd": False},
+    "ezinne": {"name": "en-NG-EzinneNeural", "lang": "en-NG", "hd": False},
+    "andrew_hd": {"name": "en-US-Andrew:DragonHDLatestNeural", "lang": "en-US", "hd": True},
+}
 SR = 48000
 
 
@@ -20,16 +26,18 @@ def creds():
     return settings.get_secret("azure_key"), settings.get_secret("azure_region")
 
 
-def build_ssml(items, voice_name, rate, pause_ms):
-    pct = int(round((rate - 1.0) * 100))
+def build_ssml(items, v, rate, pause_ms):
     parts = []
     for i, it in enumerate(items):
-        parts.append(f'<bookmark mark="s{i}"/>{html.escape(it["text"])}')
+        mark = "" if v["hd"] else f'<bookmark mark="s{i}"/>'
+        parts.append(mark + html.escape(it["text"]))
         if it.get("pause_after"):
             parts.append(f'<break time="{int(pause_ms)}ms"/>')
     body = " ".join(parts)
-    return (f'<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="en-NG">'
-            f'<voice name="{voice_name}"><prosody rate="{pct:+d}%">{body}</prosody></voice></speak>')
+    if not v["hd"]:
+        body = f'<prosody rate="{int(round((rate - 1.0) * 100)):+d}%">{body}</prosody>'
+    return (f'<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="{v["lang"]}">'
+            f'<voice name="{v["name"]}">{body}</voice></speak>')
 
 
 class Azure(Engine):
@@ -38,10 +46,12 @@ class Azure(Engine):
     kind = "cloud"
     badge = "Cloud"
     self_timed = True
-    rate_note = "Sent to Azure as the speaking rate. Sentence gaps are Azure's own natural timing."
+    rate_note = ("Sent to Azure as the speaking rate for Abeo and Ezinne. Andrew HD ignores the rate "
+                 "and comes back as one piece, so its sentences cannot be redone one at a time.")
     voices = [
         {"id": "abeo", "label": "Abeo", "note": "male, en-NG"},
         {"id": "ezinne", "label": "Ezinne", "note": "female, en-NG"},
+        {"id": "andrew_hd", "label": "Andrew HD", "note": "male, en-US, HD"},
     ]
 
     def __init__(self):
@@ -53,7 +63,7 @@ class Azure(Engine):
             return {"state": "unconfigured", "detail": "Add your Azure key and region in Settings"}
         return {"state": "ready", "detail": f"Region {region}"}
 
-    def synth_script(self, items, voice, *, rate=1.0, pause_ms=700):
+    def synth_script(self, items, voice, *, rate=1.0, pause_ms=700, params=None):
         key, region = creds()
         if not key or not region:
             raise EngineError("Azure is not set up. Add your key and region in Settings.")
@@ -107,10 +117,10 @@ class Azure(Engine):
             raise EngineError(f"Azure answered with error {e.code}.")
         except Exception as e:
             raise EngineError(f"Could not reach Azure: {e}")
-        missing = [v for v in VOICES.values() if v not in names]
+        missing = [v["name"] for v in VOICES.values() if v["name"] not in names]
         if missing:
-            return f"Connected, but these voices are not in this region: {', '.join(missing)}"
-        return "Connected. Abeo and Ezinne are available."
+            return f"Connected, but these voices are not available in this region: {', '.join(missing)}"
+        return "Connected. Abeo, Ezinne and Andrew HD are available."
 
 
 ENGINE = Azure()

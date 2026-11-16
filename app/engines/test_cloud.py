@@ -16,7 +16,7 @@ class TestCloud(Engine):
     self_timed = True
     voices = [{"id": "beep", "label": "Beep", "note": "test"}]
 
-    def synth_script(self, items, voice, *, rate=1.0, pause_ms=700):
+    def synth_script(self, items, voice, *, rate=1.0, pause_ms=700, params=None):
         CALLS.append(len(items))
         out = []
         for it in items:

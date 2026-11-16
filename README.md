@@ -1,46 +1,70 @@
 # Voice Studio
 
-Turns a written script into voiceover audio on your own PC.
+Turns a written script into voiceover audio on your own PC, in your own voice.
 
 ## Start
 Double-click **Voice Studio** on the Desktop (or `Voice Studio.bat` in this folder).
-The first start runs Setup; after that it opens in your browser in a few seconds.
-YarnGPT takes about a minute to warm up; the pill at the top right turns green when it is ready.
+The first start runs Setup. To add or repair a voice engine later, run `Setup.bat`.
 
 To stop it, press **Quit** in the app or close the small black window.
 
+## Voice engines
+| Engine | Where it runs | What it does |
+|---|---|---|
+| Chatterbox | This PC | Clones the voice in a voice profile. Controls: Expressiveness and Pacing. |
+| OpenVoice v2 | This PC | Speaks with a chosen English accent (American, British, Australian, Default, Indian), then applies the tone of a voice profile. |
+| Azure AI Speech | Cloud, your own key | Abeo, Ezinne and Andrew HD. |
+
+Only one local engine is loaded at a time (8 GB graphics memory). Selecting another engine unloads the
+previous one; the pill at the top right shows "Loading engine..." and then turns green.
+
+## Voice profiles
+**Voice profiles** (top right) > **Create voice profile**: record the passage shown (about 20 seconds) or import
+your own WAV or MP3. The app checks length (10 to 30 s), clipping and background noise before it lets you save,
+and trims silence. Profiles are stored in `data\profiles\` on this PC only and are never put in a share zip.
+Use them only for your own voice, or a voice you have written permission to use.
+
+## A/B compare
+Pick up to three engine and voice choices and press **Compare first two sentences** to hear them side by side.
+Local engines load one after another. Only one cloud voice per comparison.
+
 ## Where things go
-- Finished audio: `C:\Temp\VoiceStudio_<date-time>\` (48 kHz mono WAV at -16 LUFS, MP3 if ticked).
-  Regenerating a sentence saves a new file ending `_v2`, `_v3`; nothing is overwritten.
-- Error log: `C:\Temp\VoiceStudio_logs\voicestudio.log`, plus `errors.log` in the output folder of a failed run.
-- History and per-sentence clips: `data\` in this folder.
+- Finished audio: `C:\Temp\VoiceStudio_<date-time>\` (48 kHz mono WAV at -16 LUFS, MP3 if ticked), with
+  "AI-generated voice" in the file metadata. Regenerating a sentence saves a new file ending `_v2`, `_v3`.
+- Logs: `C:\Temp\VoiceStudio_logs\` (`console.log`, `voicestudio.log`, one `worker_<engine>.log` per engine).
+- History, per-sentence clips and voice profiles: `data\` in this folder.
 - Azure key and region: Windows Credential Manager (entry "VoiceStudio"). Never in a file.
 
 ## Safety rules built in
 - The app listens on 127.0.0.1 only and refuses requests from other sites.
-- Azure: one request per click, no retries, at least 3 seconds between requests, and a voice-safe check before sending. Batch work happens only on local YarnGPT.
-- No analytics or telemetry. Network use is limited to Azure requests you start and the optional update check.
+- Azure: one request per click, no retries, at least 3 seconds between requests, and a voice-safe check before sending.
+- No analytics or telemetry. The engines load their models from this folder with the network switched off.
+  Network use is limited to Azure requests you start and the optional update check.
 
 ## Share it with a friend
-Double-click `Make Share Zip.bat`. It builds a zip in `dist\` without your runtime, history, scripts or key.
-Your friend unzips it anywhere and double-clicks `Voice Studio.bat`; it sets itself up
-(Windows 10 or 11, internet for the first start, about 8 GB free; an NVIDIA GPU makes YarnGPT fast, without one it still works but slowly).
+Double-click `Make Share Zip.bat`. The zip leaves out the Python environments, your voice profiles, history,
+scripts and key. Your friend unzips it anywhere and double-clicks `Voice Studio.bat`; Setup asks which engines to
+install (Windows 10 or 11, internet for setup, about 20 GB free for both engines; an NVIDIA GPU with 8 GB makes
+the engines fast, without one they still work but slowly). Your friend records their own voice profile.
 
 Moving this folder on your own PC: move it, then run `Setup.bat` once to refresh the Desktop shortcut.
 
 ## Updates
-Settings > Updates. Enter the GitHub repository (`owner/repository`), then **Check now**.
-Updates come from that repository's Releases. Only the app's code is replaced; the old files are
-copied to `data\backups\` first. To publish an update: change `VERSION`, push, and create a Release
-whose tag is the version number (for example `v0.2.0`).
+Settings > Updates. Updates come from the GitHub repository's Releases. Only the app's code is replaced; the old
+files are copied to `data\backups\` first. After an update, run `Setup.bat` once. To publish an update: change
+`VERSION`, push, and create a Release whose tag is the version number (for example `v0.2.0`).
 
 ## Add a new voice engine
-1. Copy `app\engines\_template.py` to a new file in the same folder without the underscore, for example `piper_engine.py`.
-2. Fill in the id, name, voices and the `synth()` function (local) or `synth_script()` (cloud). It returns audio as a numpy array plus its sample rate.
-3. Restart Voice Studio. The engine appears in the Engine list. Joining, 48 kHz export, loudness, history and the sentence editor work without further changes.
+1. Copy `app\engines\_template.py` to a new file in the same folder without the underscore.
+2. Fill in the id, name, voices and `synth()`. For an engine whose packages clash with the others, subclass
+   `WorkerEngine` instead and add a worker file under `app\workers\` plus its own environment under `envs\`
+   (Chatterbox is the example to copy). Cloud engines set `kind = "cloud"` and write `synth_script()`.
+3. Restart Voice Studio. The engine appears in the Engine list. Joining, export, history, the sentence editor
+   and A/B compare work without further changes.
+4. Add its licence to `LICENSES.md` before sharing the app.
 
-Set `kind = "cloud"` for anything that sends text to a service, and the cloud safety rules apply to it automatically.
-New Python packages for an engine go in `requirements.txt`; run `Setup.bat` afterwards.
+## Licences
+See `LICENSES.md`.
 
 ## Icon
 Four options are in `assets\options\`. To switch, copy the chosen `icon_option_X.ico` over `assets\voicestudio.ico`
