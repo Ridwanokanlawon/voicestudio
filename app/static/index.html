@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Voice Studio</title>
+<link rel="icon" href="/assets/icon.png">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><img src="/assets/icon.png" alt="" width="30" height="30"><span>Voice Studio</span><small id="ver"></small></div>
+  <div class="top-right">
+    <button id="updatePill" class="pill accent" hidden></button>
+    <span id="enginePill" class="pill"></span>
+    <button id="themeBtn" class="icon-btn" title="Switch light and dark" aria-label="Switch light and dark">
+      <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 3a9 9 0 1 0 9 9c0-.5 0-.9-.1-1.4A6.5 6.5 0 0 1 12.4 3H12z"/></svg>
+    </button>
+    <button id="settingsBtn" class="btn ghost">Settings</button>
+    <button id="quitBtn" class="btn ghost" title="Stop Voice Studio">Quit</button>
+  </div>
+</header>
+
+<main>
+  <section class="grid">
+    <div class="card" id="scriptCard">
+      <div class="card-head">
+        <h2>Script</h2>
+        <div class="row">
+          <select id="episodeSel" hidden aria-label="Episode"></select>
+          <button id="openBtn" class="btn">Open file</button>
+          <button id="clearBtn" class="btn ghost">Clear</button>
+          <input id="fileIn" type="file" accept=".txt,.md,.docx" hidden>
+        </div>
+      </div>
+      <textarea id="script" spellcheck="true" placeholder="Paste your script here, or open a .txt, .md or .docx file.&#10;&#10;Write [pause] where you want a pause."></textarea>
+      <div class="meta" id="scriptMeta">0 words</div>
+      <div id="safe" class="safe" hidden></div>
+    </div>
+
+    <div class="card" id="voiceCard">
+      <div class="card-head"><h2>Voice</h2></div>
+      <div class="label">Engine</div>
+      <div id="engines" class="engines"></div>
+      <div class="label">Voice</div>
+      <div id="voices" class="voices"></div>
+
+      <div class="slider"><div class="label"><span>Speaking rate</span><output id="rateOut">100%</output></div>
+        <input id="rate" type="range" min="0.8" max="1.2" step="0.01" value="1"><p class="hint" id="rateNote"></p></div>
+      <div class="slider"><div class="label"><span>Pause length for [pause]</span><output id="pauseOut">700 ms</output></div>
+        <input id="pause" type="range" min="0" max="2000" step="50" value="700"></div>
+      <div class="slider" id="gapWrap"><div class="label"><span>Gap between sentences</span><output id="gapOut">150 ms</output></div>
+        <input id="gap" type="range" min="0" max="800" step="10" value="150"></div>
+
+      <label class="check"><input id="mp3" type="checkbox"> Also save an MP3</label>
+
+      <div class="actions">
+        <button id="previewBtn" class="btn">Preview first sentence</button>
+        <button id="genBtn" class="btn primary">Generate</button>
+      </div>
+      <p class="hint" id="cloudNote" hidden></p>
+      <div id="progress" class="progress" hidden><div class="bar"><i id="barFill"></i></div><span id="progText"></span></div>
+      <div id="previewBox" class="preview" hidden><span>Preview</span><audio id="previewAudio" controls></audio></div>
+      <p id="formError" class="error" hidden></p>
+    </div>
+  </section>
+
+  <section class="card" id="resultCard" hidden>
+    <div class="card-head">
+      <h2>Result</h2>
+      <div class="row">
+        <button id="saveAsBtn" class="btn">Save as</button>
+        <button id="saveMp3Btn" class="btn" hidden>Save MP3 as</button>
+        <button id="openFolderBtn" class="btn ghost">Open folder</button>
+      </div>
+    </div>
+    <div class="player">
+      <button id="playBtn" class="play" aria-label="Play or pause">
+        <svg viewBox="0 0 24 24" width="22" height="22"><path id="playIcon" fill="currentColor" d="M8 5v14l11-7z"/></svg>
+      </button>
+      <div class="wave-wrap"><canvas id="wave" height="96"></canvas></div>
+      <div class="time" id="time">0:00 / 0:00</div>
+    </div>
+    <audio id="mainAudio" preload="auto"></audio>
+    <div class="meta" id="resultMeta"></div>
+
+    <h3>Sentences</h3>
+    <p class="hint" id="sentHint">Play each sentence. If one sounds wrong, fix the text if needed and press Regenerate. Only that sentence is redone, then the full file is rebuilt as a new version.</p>
+    <ol id="sentences" class="sentences"></ol>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>History</h2></div>
+    <div id="history" class="history"><p class="hint">Nothing generated yet.</p></div>
+  </section>
+</main>
+
+<dialog id="settingsDlg">
+  <form method="dialog" class="dlg">
+    <div class="card-head"><h2>Settings</h2><button class="btn ghost" value="close">Close</button></div>
+
+    <h3>Azure AI Speech <span class="badge cloud">Cloud</span></h3>
+    <p class="hint">Stored in Windows Credential Manager on this PC only. The key is never written to a file and never leaves this PC except to Azure.</p>
+    <div class="field"><label for="azKey">Key</label><input id="azKey" type="password" autocomplete="off" placeholder="Paste Key 1"></div>
+    <div class="field"><label for="azRegion">Region</label><input id="azRegion" type="text" autocomplete="off" placeholder="for example eastus"></div>
+    <div class="row">
+      <button type="button" id="azSave" class="btn primary">Save</button>
+      <button type="button" id="azTest" class="btn">Test connection</button>
+      <button type="button" id="azForget" class="btn ghost">Remove key</button>
+    </div>
+    <p id="azMsg" class="hint"></p>
+
+    <h3>Updates</h3>
+    <p class="hint">Updates come from GitHub Releases of the repository below. Only the app's code is replaced. Your models, history, settings and scripts are left alone, and the replaced files are backed up first.</p>
+    <div class="field"><label for="upRepo">Repository</label><input id="upRepo" type="text" placeholder="owner/repository"></div>
+    <label class="check"><input id="upAuto" type="checkbox"> Check for updates when the app starts</label>
+    <div class="row">
+      <button type="button" id="upSave" class="btn">Save</button>
+      <button type="button" id="upCheck" class="btn">Check now</button>
+      <button type="button" id="upApply" class="btn primary" hidden>Install update</button>
+    </div>
+    <p id="upMsg" class="hint"></p>
+
+    <h3>About</h3>
+    <p class="hint" id="about"></p>
+  </form>
+</dialog>
+
+<dialog id="safeDlg">
+  <div class="dlg">
+    <div class="card-head"><h2>Voice-safe check</h2></div>
+    <p class="hint">This script is about to be sent to a cloud voice service. These lines could be read as a real scam message rather than a description of one. You can send it anyway.</p>
+    <div id="safeList" class="safe"></div>
+    <div class="row end">
+      <button id="safeEdit" class="btn">Go back and edit</button>
+      <button id="safeSend" class="btn primary">Send anyway</button>
+    </div>
+  </div>
+</dialog>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

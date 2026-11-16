@@ -1,0 +1,12 @@
+# never publish: the Python runtime, model weights, personal data, scripts, builds
+runtime/
+models/
+data/
+dist/
+scripts/
+__pycache__/
+*.pyc
+*.wav
+*.mp3
+*.ckpt
+*.safetensors
