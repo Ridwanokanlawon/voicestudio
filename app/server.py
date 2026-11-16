@@ -41,7 +41,7 @@ HISTORY = DATA / "history.json"
 log = logging.getLogger("voicestudio")
 log.setLevel(logging.INFO)
 _fh = logging.FileHandler(log_dir() / "voicestudio.log", encoding="utf-8")
-_fh.setLevel(logging.WARNING)
+_fh.setLevel(logging.INFO)
 _fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
 log.addHandler(_fh)
 log.addHandler(logging.StreamHandler())
@@ -561,7 +561,51 @@ def clear_previews():
             pass
 
 
+class _Tee:
+    """Copy everything printed in the console window into a log file too."""
+    def __init__(self, stream, fh):
+        self.stream, self.fh = stream, fh
+
+    def write(self, data):
+        for t in (self.stream, self.fh):
+            try:
+                t.write(data)
+                t.flush()
+            except Exception:
+                pass
+        return len(data)
+
+    def flush(self):
+        pass
+
+    def isatty(self):
+        return False
+
+
+def harden_console():
+    """Keep a record of console output and crashes, and stop a stray click in
+    the console window from freezing the app (Windows 'QuickEdit' pause)."""
+    import faulthandler
+    import sys
+    d = log_dir()
+    fh = open(d / "console.log", "a", encoding="utf-8", errors="replace")
+    fh.write(f"\n===== start {datetime.datetime.now().isoformat(timespec='seconds')} =====\n")
+    sys.stdout, sys.stderr = _Tee(sys.stdout, fh), _Tee(sys.stderr, fh)
+    faulthandler.enable(file=open(d / "crash.log", "a", encoding="utf-8"), all_threads=True)
+    if os.name == "nt":
+        try:
+            import ctypes
+            k = ctypes.windll.kernel32
+            h = k.GetStdHandle(-10)
+            mode = ctypes.c_uint()
+            if k.GetConsoleMode(h, ctypes.byref(mode)):
+                k.SetConsoleMode(h, (mode.value & ~0x0040) | 0x0080)
+        except Exception:
+            pass
+
+
 def main():
+    harden_console()
     url = f"http://{HOST}:{PORT}/"
     with socket.socket() as sock:
         sock.settimeout(0.5)
@@ -574,13 +618,16 @@ def main():
     def warm():
         for e in engines.all_engines():
             try:
+                log.info("Loading engine %s", e.id)
                 e.load()
+                log.info("Engine %s: %s", e.id, e.status())
             except Exception:
                 log.exception("Engine %s failed to load", e.id)
     threading.Thread(target=warm, daemon=True).start()
     if os.environ.get("VOICESTUDIO_NO_BROWSER") != "1":
         threading.Timer(1.2, lambda: webbrowser.open(url)).start()
     import uvicorn
+    log.info("Voice Studio %s starting on %s", version(), url)
     print(f"\n  Voice Studio {version()} is running at {url}\n  Close this window to stop it.\n")
     uvicorn.run(app, host=HOST, port=PORT, log_level="warning")
 

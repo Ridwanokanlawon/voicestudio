@@ -29,11 +29,12 @@
         <div class="row">
           <select id="episodeSel" hidden aria-label="Episode"></select>
           <button id="openBtn" class="btn">Open file</button>
+          <button id="pasteBtn" class="btn">Paste</button>
           <button id="clearBtn" class="btn ghost">Clear</button>
           <input id="fileIn" type="file" accept=".txt,.md,.docx" hidden>
         </div>
       </div>
-      <textarea id="script" spellcheck="true" placeholder="Paste your script here, or open a .txt, .md or .docx file.&#10;&#10;Write [pause] where you want a pause."></textarea>
+      <textarea id="script" spellcheck="true" placeholder="Paste your script here (Ctrl+V), drop a file on this box, or open a .txt, .md or .docx file.&#10;&#10;Write [pause] where you want a pause."></textarea>
       <div class="meta" id="scriptMeta">0 words</div>
       <div id="safe" class="safe" hidden></div>
     </div>

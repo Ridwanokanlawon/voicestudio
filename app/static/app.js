@@ -6,7 +6,9 @@ const S = { engines: [], engine: null, voice: {}, session: null, job: null, epis
 async function api(path, opts = {}) {
   const o = { method: opts.method || (opts.body ? "POST" : "GET"), headers: {} };
   if (opts.body) { o.headers["Content-Type"] = "application/json"; o.body = JSON.stringify(opts.body); }
-  const r = await fetch(path, o);
+  let r;
+  try { r = await fetch(path, o); }
+  catch (e) { throw new Error("Voice Studio is not running. Start it again from the Desktop shortcut, then reload this page."); }
   let data = null;
   try { data = await r.json(); } catch (e) { /* no body */ }
   if (!r.ok) throw new Error((data && data.detail) || `Error ${r.status}`);
@@ -81,25 +83,54 @@ for (const [id, out, unit] of [["rate", "rateOut", "%"], ["pause", "pauseOut", "
 /* ---------- script input ---------- */
 $("openBtn").onclick = () => $("fileIn").click();
 $("clearBtn").onclick = () => { $("script").value = ""; S.episodes = []; S.label = "script"; $("episodeSel").hidden = true; runCheck(); };
-$("fileIn").onchange = async (ev) => {
-  const f = ev.target.files[0]; if (!f) return;
-  ev.target.value = "";
+function parseEpisodes(md) {
+  const heads = [...md.matchAll(/^## (EP\d+) \|[ \t]*(.*?)[ \t]*$/gm)], eps = [];
+  heads.forEach((h, i) => {
+    const body = md.slice(h.index + h[0].length, i + 1 < heads.length ? heads[i + 1].index : md.length);
+    const vo = body.split("\n").filter((l) => l.startsWith("> ")).map((l) => l.slice(2).trim());
+    if (vo.length) eps.push({ id: h[1], title: h[2], text: vo.join(" ") });
+  });
+  return eps;
+}
+function loadText(text, name) {
+  text = text.replace(/^\uFEFF/, "").replace(/\r/g, "");
+  S.episodes = parseEpisodes(text);
+  const sel = $("episodeSel"); sel.replaceChildren();
+  if (S.episodes.length) {
+    for (const [i, ep] of S.episodes.entries()) sel.append(el("option", { value: i, text: `${ep.id} | ${ep.title}` }));
+    sel.hidden = false; pickEpisode(0);
+  } else {
+    sel.hidden = true; S.label = (name || "script").replace(/\.[^.]+$/, "").replace(/[^A-Za-z0-9_-]+/g, "").slice(0, 40) || "script";
+    $("script").value = text; runCheck();
+  }
+  showError("");
+}
+async function openFile(f) {
+  if (!f) return;
   try {
-    const buf = new Uint8Array(await f.arrayBuffer());
-    let bin = ""; for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
-    const r = await api("/api/parse", { body: { name: f.name, b64: btoa(bin) } });
-    S.episodes = r.episodes;
-    const sel = $("episodeSel"); sel.replaceChildren();
-    if (r.episodes.length) {
-      for (const [i, ep] of r.episodes.entries()) sel.append(el("option", { value: i, text: `${ep.id} | ${ep.title}` }));
-      sel.hidden = false; pickEpisode(0);
-    } else {
-      sel.hidden = true; S.label = f.name.replace(/\.[^.]+$/, "").replace(/[^A-Za-z0-9_-]+/g, "").slice(0, 40) || "script";
-      $("script").value = r.text; runCheck();
-    }
-    showError("");
+    if (!/\.(txt|md|docx)$/i.test(f.name)) throw new Error("Use a .txt, .md or .docx file.");
+    if (/\.docx$/i.test(f.name)) {            // Word files are unpacked by the local server
+      const buf = new Uint8Array(await f.arrayBuffer());
+      let bin = ""; for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+      loadText((await api("/api/parse", { body: { name: f.name, b64: btoa(bin) } })).text, f.name);
+    } else loadText(await f.text(), f.name);    // text files are read right here in the browser
   } catch (e) { showError(e.message); }
+}
+$("fileIn").onchange = (ev) => { const f = ev.target.files[0]; ev.target.value = ""; openFile(f); };
+$("pasteBtn").onclick = async () => {
+  try { const t = await navigator.clipboard.readText(); if (!t.trim()) throw new Error("The clipboard has no text."); loadText(t, "script"); }
+  catch (e) { showError(e.name === "NotAllowedError" ? "Allow clipboard access when the browser asks, or click in the script box and press Ctrl+V." : e.message); }
 };
+const box = $("script");
+box.addEventListener("paste", (e) => {           // Ctrl+V of a copied file opens it; copied text pastes as usual
+  const f = e.clipboardData && [...e.clipboardData.files][0];
+  if (f) { e.preventDefault(); openFile(f); return; }
+  const t = e.clipboardData && e.clipboardData.getData("text");
+  if (t && !box.value.trim() && parseEpisodes(t).length) { e.preventDefault(); loadText(t, "script"); }
+});
+["dragenter", "dragover"].forEach((n) => box.addEventListener(n, (e) => { e.preventDefault(); box.classList.add("drop"); }));
+["dragleave", "drop"].forEach((n) => box.addEventListener(n, () => box.classList.remove("drop")));
+box.addEventListener("drop", (e) => { const f = e.dataTransfer && e.dataTransfer.files[0]; if (f) { e.preventDefault(); openFile(f); } });
 function pickEpisode(i) { const ep = S.episodes[i]; if (!ep) return; $("script").value = ep.text; S.label = ep.id; runCheck(); }
 $("episodeSel").onchange = (e) => pickEpisode(+e.target.value);
 
