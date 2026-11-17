@@ -15,6 +15,7 @@ $models = Join-Path $root "models"
 $env:VOICESTUDIO_MODELS = $models
 $env:VOICESTUDIO_FETCH = "1"
 $env:PYTHONUTF8 = "1"
+$env:NLTK_DATA = Join-Path $models "nltk_data"      # keep pronunciation data inside the app folder
 $MELO_SRC = "https://github.com/myshell-ai/MeloTTS/archive/209145371cff8fc3bd60d7be902ea69cbdb7965a.zip"
 $OV_SRC   = "https://github.com/myshell-ai/OpenVoice/archive/74a1d147b17a8c3092dd5430504bd83ef6c7eb23.zip"
 
@@ -85,7 +86,7 @@ if (-not (Works $py $mainImports)) {
 
 # ---- 2. Which voice engines -------------------------------------------------
 $cbDone = (Works (PyOf (Join-Path $root "envs\chatterbox")) "chatterbox.tts, perth") -and (Test-Path (Join-Path $models "chatterbox\t3_cfg.safetensors"))
-$ovDone = (Works (PyOf (Join-Path $root "envs\openvoice")) "melo, openvoice, g2p_en") -and (Test-Path (Join-Path $models "melo\EN\checkpoint.pth")) -and (Test-Path (Join-Path $models "openvoice\converter\checkpoint.pth"))
+$ovDone = (Works (PyOf (Join-Path $root "envs\openvoice")) "melo, openvoice") -and (Test-Path (Join-Path $models "melo\EN\checkpoint.pth")) -and (Test-Path (Join-Path $models "openvoice\converter\checkpoint.pth")) -and (Test-Path (Join-Path $models "hf_cache\hub\models--M4869--WavMark")) -and (Test-Path (Join-Path $models "nltk_data\corpora\cmudict"))
 $want = @()
 if ($Engines) { $want = $Engines | ForEach-Object { $_.ToLower() } }
 else {
@@ -107,7 +108,7 @@ if (($want -contains "chatterbox") -and (-not $cbDone)) {
   & $p -m pip install --disable-pip-version-check --no-deps chatterbox-tts==0.1.7 s3tokenizer==0.3.0
   if (-not (Works $p "chatterbox.tts, perth")) { Stop-Setup "Chatterbox did not install correctly. See the log." }
   Say "Chatterbox model files (3.2 GB, one time)"
-  & $p (Join-Path $root "app\workers\fetch_chatterbox.py")
+  & $p (Join-Path $root "app\workers\fetch_chatterbox.py") 2>&1 | Tee-Object -FilePath "$logDir\fetch_chatterbox.txt"
   if ($LASTEXITCODE -ne 0) { Stop-Setup "The Chatterbox model files did not download. Run Setup.bat again to resume." }
 }
 
@@ -116,14 +117,16 @@ if (($want -contains "openvoice") -and (-not $ovDone)) {
   Say "OpenVoice environment (envs\openvoice)"
   $e = Join-Path $root "envs\openvoice"; $p = PyOf $e
   New-Venv $e
-  if (-not (Works $p "torch, torchaudio")) { Install-Torch $p }
-  & $p -m pip install --disable-pip-version-check -r (Join-Path $root "requirements-openvoice.txt")
-  if ($LASTEXITCODE -ne 0) { Stop-Setup "OpenVoice packages did not install. Run Setup.bat again." }
-  & $p -m pip install --disable-pip-version-check --no-deps g2p_en==2.1.0 $MELO_SRC $OV_SRC
-  if (-not (Works $p "melo, openvoice, g2p_en")) { Stop-Setup "OpenVoice or MeloTTS did not install correctly. See the log." }
+  if (-not (Works $p "torch, torchaudio, melo, openvoice, wavmark, nltk, transformers")) {
+    if (-not (Works $p "torch, torchaudio")) { Install-Torch $p }
+    & $p -m pip install --disable-pip-version-check -r (Join-Path $root "requirements-openvoice.txt")
+    if ($LASTEXITCODE -ne 0) { Stop-Setup "OpenVoice packages did not install. Run Setup.bat again." }
+    & $p -m pip install --disable-pip-version-check --no-deps g2p_en==2.1.0 $MELO_SRC $OV_SRC
+    if (-not (Works $p "melo, openvoice")) { Stop-Setup "OpenVoice or MeloTTS did not install correctly. See the log." }
+  } else { Write-Host "Packages already installed." }
   Say "OpenVoice and MeloTTS model files (0.8 GB, one time)"
-  & $p (Join-Path $root "app\workers\fetch_openvoice.py")
-  if ($LASTEXITCODE -ne 0) { Stop-Setup "The OpenVoice model files did not download. Run Setup.bat again to resume." }
+  & $p (Join-Path $root "app\workers\fetch_openvoice.py") 2>&1 | Tee-Object -FilePath "$logDir\fetch_openvoice.txt"
+  if ($LASTEXITCODE -ne 0) { Stop-Setup "The OpenVoice model files did not all download. The reason is in models\fetch_openvoice.log. Run Setup.bat again to resume." }
 }
 
 # ---- 5. Desktop shortcut ----------------------------------------------------

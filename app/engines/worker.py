@@ -18,6 +18,28 @@ log = logging.getLogger("voicestudio")
 TMP = DATA / "tmp"
 
 
+def memory_note():
+    """Free memory on this PC, to tell an out-of-memory stop from a real crash."""
+    try:
+        if os.name == "nt":
+            import ctypes
+
+            class MS(ctypes.Structure):
+                _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong)] + [
+                    (n, ctypes.c_ulonglong) for n in ("ullTotalPhys", "ullAvailPhys", "ullTotalPageFile",
+                                                      "ullAvailPageFile", "ullTotalVirtual", "ullAvailVirtual",
+                                                      "ullAvailExtendedVirtual")]
+            m = MS()
+            m.dwLength = ctypes.sizeof(MS)
+            ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(m))
+            g = 2 ** 30
+            return (f"Memory: {m.ullAvailPhys / g:.1f} GB of {m.ullTotalPhys / g:.1f} GB RAM free, "
+                    f"{m.ullAvailPageFile / g:.1f} GB of {m.ullTotalPageFile / g:.1f} GB commit free.")
+    except Exception:
+        pass
+    return ""
+
+
 class WorkerEngine(Engine):
     env_name = ""           # folder under envs\
     worker = ""             # file under app\workers\
@@ -67,11 +89,37 @@ class WorkerEngine(Engine):
                 self._kill()
                 raise EngineError(f"{self.name} took too long and was stopped.")
             if line is None:
-                raise EngineError(f"{self.name} stopped unexpectedly. See worker_{self.id}.log in the log folder.")
+                raise EngineError(self._death_note())
             res = json.loads(line)
             if not res.get("ok"):
                 raise EngineError(f"{self.name}: {res.get('error', 'unknown error')}")
             return res
+
+    def _death_note(self):
+        """Why did the worker process end? Exit code, memory and its last log line."""
+        code = None
+        try:
+            code = self._proc.wait(timeout=5)
+        except Exception:
+            pass
+        known = {0xC0000005: "access violation (a crash inside a library)", 0xC0000409: "the library aborted",
+                 0xC000001D: "illegal instruction (the processor lacks a feature the library needs)",
+                 0xC0000135: "a required DLL was not found", 0xC0000142: "a DLL failed to start",
+                 0xC00000FD: "stack overflow", 0xC0000017: "not enough memory", 1: "Python error",
+                 -9: "killed, usually out of memory", 137: "killed, usually out of memory"}
+        u = code & 0xFFFFFFFF if isinstance(code, int) and code < 0 and os.name == "nt" else code
+        why = known.get(u, known.get(code, "unknown reason"))
+        last = ""
+        try:
+            lines = [l.strip() for l in (log_dir() / f"worker_{self.id}.log").read_text(
+                encoding="utf-8", errors="replace").splitlines() if l.strip()]
+            last = lines[-1][:160] if lines else ""
+        except Exception:
+            pass
+        note = (f"{self.name} stopped while working (exit code {u if u is None else hex(u) if u > 255 else u}: {why}). "
+                f"{memory_note()} Last log line: {last or 'none'}")
+        log.error(note)
+        return note
 
     def _kill(self):
         p, self._proc = self._proc, None
@@ -85,6 +133,7 @@ class WorkerEngine(Engine):
         if not self.installed():
             return
         self._state, self._detail = "loading", "Loading engine..."
+        log.info("Starting %s worker. %s", self.id, memory_note())
         try:
             self._kill()
             TMP.mkdir(parents=True, exist_ok=True)

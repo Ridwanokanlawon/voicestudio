@@ -12,12 +12,21 @@ import numpy as np
 from .. import settings
 from .base import Engine, EngineError
 
-# hd=True: Dragon HD voices accept only a small part of SSML (no speaking rate,
-# no sentence bookmarks), so they are sent plainly and come back as one piece.
+# plain=True: Dragon HD and MAI voices accept only a small part of SSML (no
+# speaking rate, no sentence bookmarks), so they are sent plainly and come back
+# as one piece. speed: the speed picked for that voice after listening; the
+# rate slider is applied on top of it.
 VOICES = {
-    "abeo": {"name": "en-NG-AbeoNeural", "lang": "en-NG", "hd": False},
-    "ezinne": {"name": "en-NG-EzinneNeural", "lang": "en-NG", "hd": False},
-    "andrew_hd": {"name": "en-US-Andrew:DragonHDLatestNeural", "lang": "en-US", "hd": True},
+    "leah":      {"name": "en-ZA-LeahNeural", "lang": "en-ZA", "plain": False, "speed": 1.05},
+    "asilia":    {"name": "en-KE-AsiliaNeural", "lang": "en-KE", "plain": False, "speed": 1.025},
+    "sonia":     {"name": "en-GB-SoniaNeural", "lang": "en-GB", "plain": False, "speed": 1.0},
+    "ryan":      {"name": "en-GB-RyanNeural", "lang": "en-GB", "plain": False, "speed": 1.0},
+    "harry":     {"name": "en-GB-Harry:MAI-Voice-2.1", "lang": "en-GB", "plain": True, "speed": 1.0},
+    "harper":    {"name": "en-US-Harper:MAI-Voice-2.1", "lang": "en-US", "plain": True, "speed": 1.0},
+    "emma_hd":   {"name": "en-US-Emma:DragonHDLatestNeural", "lang": "en-US", "plain": True, "speed": 1.0},
+    "andrew_hd": {"name": "en-US-Andrew:DragonHDLatestNeural", "lang": "en-US", "plain": True, "speed": 1.0},
+    "abeo":      {"name": "en-NG-AbeoNeural", "lang": "en-NG", "plain": False, "speed": 1.0},
+    "ezinne":    {"name": "en-NG-EzinneNeural", "lang": "en-NG", "plain": False, "speed": 1.0},
 }
 SR = 48000
 
@@ -29,13 +38,14 @@ def creds():
 def build_ssml(items, v, rate, pause_ms):
     parts = []
     for i, it in enumerate(items):
-        mark = "" if v["hd"] else f'<bookmark mark="s{i}"/>'
+        mark = "" if v["plain"] else f'<bookmark mark="s{i}"/>'
         parts.append(mark + html.escape(it["text"]))
         if it.get("pause_after"):
             parts.append(f'<break time="{int(pause_ms)}ms"/>')
     body = " ".join(parts)
-    if not v["hd"]:
-        body = f'<prosody rate="{int(round((rate - 1.0) * 100)):+d}%">{body}</prosody>'
+    pct = (rate * v["speed"] - 1.0) * 100
+    if not v["plain"] and abs(pct) >= 0.05:
+        body = f'<prosody rate="{pct:+.1f}%">{body}</prosody>'
     return (f'<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="{v["lang"]}">'
             f'<voice name="{v["name"]}">{body}</voice></speak>')
 
@@ -46,12 +56,20 @@ class Azure(Engine):
     kind = "cloud"
     badge = "Cloud"
     self_timed = True
-    rate_note = ("Sent to Azure as the speaking rate for Abeo and Ezinne. Andrew HD ignores the rate "
-                 "and comes back as one piece, so its sentences cannot be redone one at a time.")
+    rate_note = ("Leah is already set 5% faster and Asilia 2.5% faster; this slider is applied on top. "
+                 "Harry, Harper, Emma HD and Andrew HD ignore the rate and come back as one piece, "
+                 "so their sentences cannot be redone one at a time.")
     voices = [
-        {"id": "abeo", "label": "Abeo", "note": "male, en-NG"},
-        {"id": "ezinne", "label": "Ezinne", "note": "female, en-NG"},
-        {"id": "andrew_hd", "label": "Andrew HD", "note": "male, en-US, HD"},
+        {"id": "leah", "label": "Leah", "note": "female, South African, +5%"},
+        {"id": "asilia", "label": "Asilia", "note": "female, Kenyan, +2.5%"},
+        {"id": "sonia", "label": "Sonia", "note": "female, British"},
+        {"id": "ryan", "label": "Ryan", "note": "male, British"},
+        {"id": "harry", "label": "Harry", "note": "male, British, MAI"},
+        {"id": "harper", "label": "Harper", "note": "female, US, MAI"},
+        {"id": "emma_hd", "label": "Emma HD", "note": "female, US, HD"},
+        {"id": "andrew_hd", "label": "Andrew HD", "note": "male, US, HD"},
+        {"id": "abeo", "label": "Abeo", "note": "male, Nigerian"},
+        {"id": "ezinne", "label": "Ezinne", "note": "female, Nigerian"},
     ]
 
     def __init__(self):
@@ -117,10 +135,12 @@ class Azure(Engine):
             raise EngineError(f"Azure answered with error {e.code}.")
         except Exception as e:
             raise EngineError(f"Could not reach Azure: {e}")
-        missing = [v["name"] for v in VOICES.values() if v["name"] not in names]
+        have = {n.lower() for n in names if n}
+        missing = [k for k, v in VOICES.items() if v["name"].lower() not in have]
         if missing:
-            return f"Connected, but these voices are not available in this region: {', '.join(missing)}"
-        return "Connected. Abeo, Ezinne and Andrew HD are available."
+            return ("Connected. Not listed for this region (they may still work, or need another region): "
+                    + ", ".join(missing))
+        return f"Connected. All {len(VOICES)} voices are available in this region."
 
 
 ENGINE = Azure()

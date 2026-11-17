@@ -10,8 +10,28 @@ import sys
 import traceback
 
 
+def step(msg):
+    """Progress line in the worker log, so a crash shows how far loading got."""
+    import datetime
+    print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] {msg}", file=sys.stderr, flush=True)
+
+
+def gpu_note():
+    try:
+        import torch
+        if torch.cuda.is_available():
+            free, total = torch.cuda.mem_get_info()
+            return f"GPU {torch.cuda.get_device_name(0)}: {free / 2**30:.1f} GB free of {total / 2**30:.1f} GB"
+        return "no CUDA GPU visible to this environment"
+    except Exception as e:
+        return f"GPU check failed: {e}"
+
+
 def serve(handlers):
     """handlers: {'cmd': function(request_dict) -> result_dict}"""
+    import faulthandler
+    faulthandler.enable(file=sys.stderr, all_threads=True)   # a hard crash leaves a trace in the worker log
+    step(f"worker started (python {sys.version.split()[0]})")
     out = os.fdopen(os.dup(1), "w", encoding="utf-8")
     os.dup2(2, 1)                      # anything else printed goes to the worker log
     sys.stdout = sys.stderr

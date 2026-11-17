@@ -63,12 +63,15 @@ def load(req):
     from melo.api import TTS
     from openvoice.api import ToneColorConverter
     dev = _proto.device()
+    _proto.step("melo and openvoice imported; " + _proto.gpu_note())
     S["tts"] = TTS(language="EN", device=dev, config_path=os.path.join(MELO, "config.json"),
                    ckpt_path=os.path.join(MELO, "checkpoint.pth"))
+    _proto.step("MeloTTS loaded")
     S["conv"] = ToneColorConverter(os.path.join(OV, "converter", "config.json"), device=dev)
     S["conv"].load_ckpt(os.path.join(OV, "converter", "checkpoint.pth"))
     for acc, f in ACCENTS.items():
         S["src"][acc] = torch.load(os.path.join(OV, "base_speakers", "ses", f + ".pth"), map_location=dev)
+    _proto.step("converter loaded; " + _proto.gpu_note())
     return {"detail": f"Warm on {_proto.device_name()}", "sr": int(S["tts"].hps.data.sampling_rate),
             "accents": list(S["tts"].hps.data.spk2id.keys())}
 

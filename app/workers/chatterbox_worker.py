@@ -13,13 +13,16 @@ FILES = ["ve.safetensors", "t3_cfg.safetensors", "s3gen.safetensors", "tokenizer
 
 
 def load(req):
+    _proto.step("importing chatterbox")
     from chatterbox.tts import ChatterboxTTS
     d = os.path.join(MODELS, "chatterbox")
     missing = [f for f in FILES if not os.path.exists(os.path.join(d, f))]
     if missing:
         raise RuntimeError("Chatterbox model files are missing. Run Setup.bat.")
+    _proto.step("chatterbox imported; " + _proto.gpu_note())
     S["model"] = ChatterboxTTS.from_local(d, _proto.device())
     S["default_conds"] = S["model"].conds
+    _proto.step("model loaded; " + _proto.gpu_note())
     return {"detail": f"Warm on {_proto.device_name()}", "sr": S["model"].sr}
 
 
