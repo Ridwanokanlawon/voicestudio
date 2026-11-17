@@ -18,6 +18,26 @@ log = logging.getLogger("voicestudio")
 TMP = DATA / "tmp"
 
 
+def memory_free():
+    """(free RAM GB, free commit GB) on Windows, else (None, None)."""
+    try:
+        if os.name == "nt":
+            import ctypes
+
+            class MS(ctypes.Structure):
+                _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong)] + [
+                    (n, ctypes.c_ulonglong) for n in ("ullTotalPhys", "ullAvailPhys", "ullTotalPageFile",
+                                                      "ullAvailPageFile", "ullTotalVirtual", "ullAvailVirtual",
+                                                      "ullAvailExtendedVirtual")]
+            m = MS()
+            m.dwLength = ctypes.sizeof(MS)
+            ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(m))
+            return m.ullAvailPhys / 2 ** 30, m.ullAvailPageFile / 2 ** 30
+    except Exception:
+        pass
+    return None, None
+
+
 def memory_note():
     """Free memory on this PC, to tell an out-of-memory stop from a real crash."""
     try:
@@ -44,6 +64,7 @@ class WorkerEngine(Engine):
     env_name = ""           # folder under envs\
     worker = ""             # file under app\workers\
     needs: list = []        # model files (relative to models\) that must exist
+    min_free_gb = 6.0       # free memory (commit) needed to load; below this the load is refused
     load_timeout = 900
     synth_timeout = 600
 
@@ -63,8 +84,10 @@ class WorkerEngine(Engine):
         return self.python().exists() and all((MODELS / n).exists() for n in self.needs)
 
     def status(self):
+        if not self.python().exists():
+            return {"state": "missing", "detail": "Not installed. Close Voice Studio, run Setup.bat and choose this engine."}
         if not self.installed():
-            return {"state": "missing", "detail": "Not installed. Run Setup.bat and choose this engine."}
+            return {"state": "missing", "detail": "Its download did not finish. Close Voice Studio and run Setup.bat again; it only fetches what is missing."}
         if self._proc is not None and self._proc.poll() is not None and self._state == "ready":
             self._state, self._detail = "error", "The engine process stopped. Select the engine again to restart it."
         return {"state": self._state, "detail": self._detail}
@@ -131,6 +154,15 @@ class WorkerEngine(Engine):
 
     def load(self):
         if not self.installed():
+            return
+        ram, commit = memory_free()
+        if commit is not None and commit < self.min_free_gb:
+            # loading now would crash this engine, and possibly the app with it
+            self._state = "error"
+            self._detail = (f"This PC is almost out of memory: {commit:.1f} GB free, and {self.name} needs about "
+                            f"{self.min_free_gb:.0f} GB. Close other heavy apps (check Task Manager, Memory column) "
+                            f"or restart the PC, then select the engine again.")
+            log.warning("%s not loaded: %s", self.id, memory_note())
             return
         self._state, self._detail = "loading", "Loading engine..."
         log.info("Starting %s worker. %s", self.id, memory_note())

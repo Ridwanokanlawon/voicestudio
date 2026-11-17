@@ -10,7 +10,10 @@ class OpenVoice(WorkerEngine):
     badge = "Local, no account"
     env_name = "openvoice"
     worker = "openvoice_worker.py"
-    needs = ["openvoice/converter/checkpoint.pth", "melo/EN/checkpoint.pth"]
+    needs = ["openvoice/converter/checkpoint.pth", "melo/EN/checkpoint.pth",
+             "hf_cache/hub/models--bert-base-uncased", "hf_cache/hub/models--M4869--WavMark",
+             "nltk_data/corpora/cmudict", "nltk_data/taggers/averaged_perceptron_tagger"]
+    min_free_gb = 6.0
     uses_profiles = True
     extra_voices = [{"id": "base", "label": "Base voice only", "note": "accent without my tone"}]
     native_rate = True
