@@ -85,7 +85,7 @@ if (-not (Works $py $mainImports)) {
 
 # ---- 2. Which voice engines -------------------------------------------------
 $cbDone = (Works (PyOf (Join-Path $root "envs\chatterbox")) "chatterbox.tts, perth") -and (Test-Path (Join-Path $models "chatterbox\t3_cfg.safetensors"))
-$ovDone = (Works (PyOf (Join-Path $root "envs\openvoice")) "melo, openvoice.api, g2p_en") -and (Test-Path (Join-Path $models "melo\EN\checkpoint.pth")) -and (Test-Path (Join-Path $models "openvoice\converter\checkpoint.pth"))
+$ovDone = (Works (PyOf (Join-Path $root "envs\openvoice")) "melo, openvoice, g2p_en") -and (Test-Path (Join-Path $models "melo\EN\checkpoint.pth")) -and (Test-Path (Join-Path $models "openvoice\converter\checkpoint.pth"))
 $want = @()
 if ($Engines) { $want = $Engines | ForEach-Object { $_.ToLower() } }
 else {
@@ -120,7 +120,7 @@ if (($want -contains "openvoice") -and (-not $ovDone)) {
   & $p -m pip install --disable-pip-version-check -r (Join-Path $root "requirements-openvoice.txt")
   if ($LASTEXITCODE -ne 0) { Stop-Setup "OpenVoice packages did not install. Run Setup.bat again." }
   & $p -m pip install --disable-pip-version-check --no-deps g2p_en==2.1.0 $MELO_SRC $OV_SRC
-  if (-not (Works $p "melo, openvoice.api, g2p_en")) { Stop-Setup "OpenVoice or MeloTTS did not install correctly. See the log." }
+  if (-not (Works $p "melo, openvoice, g2p_en")) { Stop-Setup "OpenVoice or MeloTTS did not install correctly. See the log." }
   Say "OpenVoice and MeloTTS model files (0.8 GB, one time)"
   & $p (Join-Path $root "app\workers\fetch_openvoice.py")
   if ($LASTEXITCODE -ne 0) { Stop-Setup "The OpenVoice model files did not download. Run Setup.bat again to resume." }
