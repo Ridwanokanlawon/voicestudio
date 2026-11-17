@@ -46,6 +46,13 @@ function renderEngines() {
       el("span", { class: "badge " + (e.kind === "cloud" ? "cloud" : "local"), text: e.badge }),
       el("span", { class: "st" + (e.status.state === "error" || e.status.state === "missing" ? " bad" : ""),
                    text: (STATE_TEXT[e.status.state] || "") + (e.status.detail || "") }));
+    if (e.status.repairable) {
+      const b = el("button", { class: "btn small primary", type: "button", text: "Download missing files", style: "grid-column: 2 / 4; justify-self: start; margin-top: 6px" });
+      b.onclick = async (ev) => { ev.preventDefault(); b.disabled = true;
+        try { await api(`/api/engines/${e.id}/repair`, { method: "POST" }); } catch (x) { showError(x.message); }
+        refresh().catch(() => {}); };
+      row.append(b);
+    }
     radio.onchange = () => { S.engine = e.id; store.set("vs-engine", e.id); renderEngines(); renderVoices(); renderParams(); syncControls();
       if (e.kind === "local" && ["idle", "error"].includes(e.status.state)) activate(e.id); };
     box.append(row);

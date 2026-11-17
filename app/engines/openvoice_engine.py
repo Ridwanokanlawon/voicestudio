@@ -14,6 +14,7 @@ class OpenVoice(WorkerEngine):
              "hf_cache/hub/models--bert-base-uncased", "hf_cache/hub/models--M4869--WavMark",
              "nltk_data/corpora/cmudict", "nltk_data/taggers/averaged_perceptron_tagger"]
     min_free_gb = 6.0
+    fetch = "fetch_openvoice.py"
     uses_profiles = True
     extra_voices = [{"id": "base", "label": "Base voice only", "note": "accent without my tone"}]
     native_rate = True

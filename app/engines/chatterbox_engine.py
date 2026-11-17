@@ -13,6 +13,7 @@ class Chatterbox(WorkerEngine):
     needs = ["chatterbox/t3_cfg.safetensors", "chatterbox/s3gen.safetensors", "chatterbox/ve.safetensors",
              "chatterbox/tokenizer.json", "chatterbox/conds.pt"]
     min_free_gb = 10.0
+    fetch = "fetch_chatterbox.py"
     uses_profiles = True
     extra_voices = [{"id": "builtin", "label": "Built-in voice", "note": "Chatterbox default"}]
     rate_note = "Chatterbox has no speed setting, so the speed is changed after generation (pitch is kept). The Pacing control also affects speed."

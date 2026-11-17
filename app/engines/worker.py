@@ -65,6 +65,7 @@ class WorkerEngine(Engine):
     worker = ""             # file under app\workers\
     needs: list = []        # model files (relative to models\) that must exist
     min_free_gb = 6.0       # free memory (commit) needed to load; below this the load is refused
+    fetch = ""              # file under app\workers\ that downloads this engine's model files
     load_timeout = 900
     synth_timeout = 600
 
@@ -86,8 +87,12 @@ class WorkerEngine(Engine):
     def status(self):
         if not self.python().exists():
             return {"state": "missing", "detail": "Not installed. Close Voice Studio, run Setup.bat and choose this engine."}
+        if self._state == "loading":
+            return {"state": "loading", "detail": self._detail}
         if not self.installed():
-            return {"state": "missing", "detail": "Its download did not finish. Close Voice Studio and run Setup.bat again; it only fetches what is missing."}
+            why = f" Last attempt: {self._fetch_error}" if getattr(self, "_fetch_error", "") else ""
+            return {"state": "missing", "repairable": bool(self.fetch),
+                    "detail": "Some of its model files are not downloaded yet. Press Download missing files (needs internet)." + why}
         if self._proc is not None and self._proc.poll() is not None and self._state == "ready":
             self._state, self._detail = "error", "The engine process stopped. Select the engine again to restart it."
         return {"state": self._state, "detail": self._detail}
@@ -188,6 +193,33 @@ class WorkerEngine(Engine):
             self._state = "error"
             self._detail = str(e) if isinstance(e, EngineError) else f"{type(e).__name__}: {e}"
             log.exception("%s failed to load", self.id)
+
+    def repair(self):
+        """Download whatever model files are missing, using the engine's own
+        environment. Started only by the Download button in the app."""
+        if not self.python().exists() or not self.fetch or self._state == "loading":
+            return
+        self._state, self._detail, self._fetch_error = "loading", "Downloading missing model files...", ""
+        logf = log_dir() / f"fetch_{self.id}.log"
+        try:
+            env = dict(os.environ, VOICESTUDIO_MODELS=str(MODELS), VOICESTUDIO_FETCH="1", PYTHONUTF8="1",
+                       PYTHONIOENCODING="utf-8")
+            for k in ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "PYTHONPATH"):
+                env.pop(k, None)
+            flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+            with open(logf, "a", encoding="utf-8", errors="replace") as out:
+                r = subprocess.run([str(self.python()), "-u", str(ROOT / "app" / "workers" / self.fetch)],
+                                   stdout=out, stderr=subprocess.STDOUT, cwd=str(ROOT), env=env,
+                                   creationflags=flags, timeout=3600)
+            if r.returncode != 0 or not self.installed():
+                lines = [l.strip() for l in logf.read_text(encoding="utf-8", errors="replace").splitlines() if l.strip()]
+                errs = [l for l in lines if "Error" in l or "FAILED" in l]
+                self._fetch_error = (errs[-1] if errs else lines[-1] if lines else "unknown problem")[:220]
+                log.error("Download for %s failed: %s", self.id, self._fetch_error)
+        except Exception as e:
+            self._fetch_error = f"{type(e).__name__}: {e}"[:220]
+            log.exception("Download for %s failed", self.id)
+        self._state, self._detail = "idle", "Loads when selected"
 
     def unload(self):
         if self._proc is None:

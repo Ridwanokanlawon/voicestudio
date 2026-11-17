@@ -39,7 +39,8 @@ Local engines load one after another. Only one cloud voice per comparison.
 - The app listens on 127.0.0.1 only and refuses requests from other sites.
 - Azure: one request per click, no retries, at least 3 seconds between requests, and a voice-safe check before sending.
 - No analytics or telemetry. The engines load their models from this folder with the network switched off.
-  Network use is limited to Azure requests you start and the optional update check.
+  Network use is limited to Azure requests you start, the optional update check, and the
+  **Download missing files** button (shown on an engine only when its model download did not finish).
 
 ## Share it with a friend
 Double-click `Make Share Zip.bat`. The zip leaves out the Python environments, your voice profiles, history,

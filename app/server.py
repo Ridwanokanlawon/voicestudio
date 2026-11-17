@@ -579,6 +579,22 @@ def activate(eid: str):
     return eng.status()
 
 
+@app.post("/api/engines/{eid}/repair")
+def repair(eid: str):
+    """Download an engine's missing model files (pressed by the user)."""
+    try:
+        eng = engines.get(eid)
+    except EngineError as e:
+        fail(404, str(e))
+    if not hasattr(eng, "repair") or not eng.status().get("repairable"):
+        fail(409, "Nothing to download for this engine. If it is not installed at all, run Setup.bat.")
+    if busy.locked():
+        fail(409, "Wait for the current generation to finish first.")
+    threading.Thread(target=eng.repair, daemon=True).start()
+    time.sleep(0.3)
+    return eng.status()
+
+
 @app.get("/api/profiles")
 def profile_list():
     return profiles.all_profiles()
