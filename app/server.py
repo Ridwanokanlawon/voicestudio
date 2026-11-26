@@ -29,7 +29,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import audio, engines, profiles, safecheck, settings, textproc, updater
+from . import audio, engines, profiles, safecheck, settings, setup_runner, textproc, updater
 from .engines.base import EngineError
 from .paths import ASSETS, DATA, SESSIONS, STATIC, log_dir, new_out_dir, out_root, version
 
@@ -289,6 +289,8 @@ def run_job(job, s, eng, targets, variation):
 
 
 def start_job(s, eng, targets, variation=False):
+    if setup_runner.S["running"] and eng.kind == "local":
+        fail(409, "Engines are being downloaded. Local engines are available again when that finishes.")
     if eng.kind == "cloud":
         cloud_gate()
     if not busy.acquire(blocking=False):
@@ -350,6 +352,10 @@ class ProfileBody(BaseModel):
     token: Optional[str] = None
     name: str = ""
     consent: bool = False
+
+
+class SetupBody(BaseModel):
+    packs: list[str] = []
 
 
 class RegenBody(BaseModel):
@@ -593,6 +599,22 @@ def repair(eid: str):
     threading.Thread(target=eng.repair, daemon=True).start()
     time.sleep(0.3)
     return eng.status()
+
+
+@app.get("/api/setup")
+def setup_status():
+    return setup_runner.status()
+
+
+@app.post("/api/setup")
+def setup_start(b: SetupBody):
+    if busy.locked():
+        fail(409, "Wait for the current generation to finish first.")
+    try:
+        setup_runner.start(b.packs)
+    except ValueError as e:
+        fail(400, str(e))
+    return setup_runner.status()
 
 
 @app.get("/api/profiles")
@@ -849,24 +871,33 @@ def harden_console():
             pass
 
 
-def main():
-    harden_console()
-    url = f"http://{HOST}:{PORT}/"
+def already_running():
     with socket.socket() as sock:
         sock.settimeout(0.5)
-        if sock.connect_ex((HOST, PORT)) == 0:       # already running: just show it
-            webbrowser.open(url)
-            return
+        return sock.connect_ex((HOST, PORT)) == 0
+
+
+def prepare():
+    """Everything that has to happen before the server starts answering."""
+    import atexit
     engines.discover()
     clear_previews()
-
-    import atexit
     atexit.register(engines.shutdown)
     log.info("Engines: %s", {e.id: e.status()["state"] for e in engines.all_engines()})
+    log.info("Voice Studio %s starting on http://%s:%s/", version(), HOST, PORT)
+
+
+def main():
+    """Browser mode: a console window plus a browser tab."""
+    harden_console()
+    url = f"http://{HOST}:{PORT}/"
+    if already_running():                            # already running: just show it
+        webbrowser.open(url)
+        return
+    prepare()
     if os.environ.get("VOICESTUDIO_NO_BROWSER") != "1":
         threading.Timer(1.2, lambda: webbrowser.open(url)).start()
     import uvicorn
-    log.info("Voice Studio %s starting on %s", version(), url)
     print(f"\n  Voice Studio {version()} is running at {url}\n  Close this window to stop it.\n")
     uvicorn.run(app, host=HOST, port=PORT, log_level="warning")
 

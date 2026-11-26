@@ -1,7 +1,7 @@
 ; Voice Studio installer (Inno Setup 6). Built by .github/workflows/build.yml:
 ;   ISCC.exe /DAppVersion=0.3.0 installer\voicestudio.iss
-; The installer carries only the app itself (a few MB). The Python
-; environments and voice models are downloaded by setup.ps1 on the PC.
+; The installer carries only the app itself (a few MB). It prepares the small
+; app environment; voice engines are downloaded from the app's Engines screen.
 #ifndef AppVersion
   #define AppVersion "0.0.0"
 #endif
@@ -29,19 +29,17 @@ UsePreviousAppDir=yes
 CloseApplications=no
 
 [Messages]
-WelcomeLabel2=This installs Voice Studio [ver] in your user account.%n%nThe app itself is small. The voice engines you tick on the next pages are downloaded afterwards (2 to 16 GB, needs internet).
+WelcomeLabel2=This installs Voice Studio [ver] in your user account.%n%nThe app itself is small. You choose the voice engines inside the app afterwards; each is a one-time download (2 to 8 GB, needs internet).
 FinishedLabel=Voice Studio is installed. Start it from the Start menu or the Desktop shortcut.
 
 [Tasks]
-Name: "lite"; Description: "Light engines: Kokoro and Pocket TTS (preset voices, any PC, about 2 GB)"; GroupDescription: "Voice engines to download now:"
-Name: "chatterbox"; Description: "Chatterbox: clone your voice (NVIDIA GPU recommended, about 8 GB)"; GroupDescription: "Voice engines to download now:"; Flags: unchecked
-Name: "openvoice"; Description: "OpenVoice v2: your tone with a chosen accent (about 6 GB)"; GroupDescription: "Voice engines to download now:"; Flags: unchecked
 Name: "desktopicon"; Description: "Create a Desktop shortcut"; GroupDescription: "Shortcuts:"
 
 [Files]
 Source: "..\app\*"; DestDir: "{app}\app"; Excludes: "__pycache__\*,*.pyc,test_*.py"; Flags: recursesubdirs ignoreversion
 Source: "..\assets\*"; DestDir: "{app}\assets"; Flags: recursesubdirs ignoreversion
 Source: "..\Voice Studio.bat"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\Voice Studio (browser mode).bat"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\Setup.bat"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\setup.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\Make Share Zip.bat"; DestDir: "{app}"; Flags: ignoreversion
@@ -56,12 +54,13 @@ Source: "..\VERSION"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\update.json"; DestDir: "{app}"; Flags: onlyifdoesntexist
 
 [Icons]
-Name: "{autoprograms}\Voice Studio"; Filename: "{app}\Voice Studio.bat"; WorkingDir: "{app}"; IconFilename: "{app}\assets\voicestudio.ico"; Flags: runminimized
-Name: "{autodesktop}\Voice Studio"; Filename: "{app}\Voice Studio.bat"; WorkingDir: "{app}"; IconFilename: "{app}\assets\voicestudio.ico"; Flags: runminimized; Tasks: desktopicon
+Name: "{autoprograms}\Voice Studio"; Filename: "{app}\runtime\Scripts\pythonw.exe"; Parameters: "-m app.desktop"; WorkingDir: "{app}"; IconFilename: "{app}\assets\voicestudio.ico"
+Name: "{autodesktop}\Voice Studio"; Filename: "{app}\runtime\Scripts\pythonw.exe"; Parameters: "-m app.desktop"; WorkingDir: "{app}"; IconFilename: "{app}\assets\voicestudio.ico"; Tasks: desktopicon
 
 [Run]
-Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\setup.ps1"" -Yes -NoShortcut -Engines {code:EngineList}"; WorkingDir: "{app}"; StatusMsg: "Downloading Python packages and voice engines. A second window shows the progress; this can take a while..."; Flags: waituntilterminated
-Filename: "{app}\Voice Studio.bat"; WorkingDir: "{app}"; Description: "Start Voice Studio now"; Flags: postinstall nowait skipifsilent shellexec runminimized
+; prepares the small app environment (no engines). Engines are chosen inside the app afterwards.
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\setup.ps1"" -Yes -NoShortcut -Engines none"; WorkingDir: "{app}"; StatusMsg: "Preparing Voice Studio (downloads about 150 MB, a few minutes)..."; Flags: waituntilterminated runhidden
+Filename: "{app}\runtime\Scripts\pythonw.exe"; Parameters: "-m app.desktop"; WorkingDir: "{app}"; Description: "Start Voice Studio now"; Flags: postinstall nowait skipifsilent
 
 [UninstallDelete]
 ; things the app downloaded or generated. data\ (voice profiles, history) is kept on purpose.
@@ -70,12 +69,3 @@ Type: filesandordirs; Name: "{app}\envs"
 Type: filesandordirs; Name: "{app}\models"
 Type: filesandordirs; Name: "{app}\app"
 Type: filesandordirs; Name: "{app}\dist"
-
-[Code]
-function EngineList(Param: String): String;
-begin
-  Result := 'none';
-  if WizardIsTaskSelected('lite') then Result := Result + ',lite';
-  if WizardIsTaskSelected('chatterbox') then Result := Result + ',chatterbox';
-  if WizardIsTaskSelected('openvoice') then Result := Result + ',openvoice';
-end;

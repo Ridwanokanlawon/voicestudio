@@ -1,9 +1,10 @@
 @echo off
-title Voice Studio (close this window to stop)
+rem Starts Voice Studio in its own window. If the app has not been set up yet, runs Setup first.
 cd /d "%~dp0"
-if exist "runtime\Scripts\python.exe" goto run
+if exist "runtime\Scripts\pythonw.exe" goto run
+title Voice Studio setup
 echo First start: Voice Studio needs to set itself up.
-call "%~dp0Setup.bat"
+call "%~dp0Setup.bat" -Engines none -Yes
 if errorlevel 1 (
   echo.
   echo Setup did not finish. See the messages above.
@@ -11,5 +12,4 @@ if errorlevel 1 (
   exit /b 1
 )
 :run
-"runtime\Scripts\python.exe" -m app.server
-if errorlevel 1 pause
+start "" "runtime\Scripts\pythonw.exe" -m app.desktop

@@ -1,5 +1,5 @@
 """End-to-end check used by the build workflow (and usable by hand):
-  runtime\\Scripts\\python.exe tools\\smoke_test.py kokoro pocket
+  runtime\\Scripts\\python.exe tools\\smoke_test.py [--install lite,openvoice] kokoro pocket
 Starts Voice Studio, generates a short script with each named engine and checks
 the exported file. Exits with 1 if anything fails. Standard library only."""
 import json
@@ -33,7 +33,13 @@ def call(path, body=None):
 
 
 def main():
-    engines = sys.argv[1:] or ["kokoro", "pocket"]
+    args = sys.argv[1:]
+    install = []
+    if "--install" in args:
+        i = args.index("--install")
+        install = [x for x in args[i + 1].split(",") if x]
+        del args[i:i + 2]
+    engines = args or ["kokoro", "pocket"]
     out = Path(tempfile.mkdtemp(prefix="vs_smoke_"))
     env = dict(os.environ, VOICESTUDIO_NO_BROWSER="1", VOICESTUDIO_OUT=str(out), VOICESTUDIO_PORT=str(PORT))
     srv = subprocess.Popen([sys.executable, "-m", "app.server"], cwd=str(ROOT), env=env)
@@ -47,6 +53,29 @@ def main():
                 time.sleep(1)
         st = call("/api/state")[1]
         print("version", st["version"], {e["id"]: e["status"]["state"] for e in st["engines"]}, flush=True)
+        if install:
+            t = time.time()
+            code, r = call("/api/setup", {"packs": install})
+            print("install from the app:", install, code, r.get("detail", ""), flush=True)
+            last = ""
+            while code == 200:
+                r = call("/api/setup")[1]
+                if r["step"] != last:
+                    last = r["step"]
+                    print(f"   [{r['elapsed']}s] {last}", flush=True)
+                if not r["running"]:
+                    break
+                if time.time() - t > 3000:
+                    r["error"] = "timed out"
+                    break
+                time.sleep(3)
+            if code != 200 or r.get("error"):
+                print("FAIL install:", r.get("error") or r, flush=True)
+                print("\n".join(r.get("tail", [])), flush=True)
+                failed.append("install")
+            else:
+                print(f"OK   install took {time.time() - t:.0f}s;",
+                      {p["id"]: p["installed"] for p in r["packs"]}, flush=True)
         for eng in engines:
             t = time.time()
             code, job = call("/api/generate", {"text": TEXT, "engine": eng, "voice": VOICE[eng], "label": "smoke"})

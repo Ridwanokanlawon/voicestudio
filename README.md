@@ -3,10 +3,15 @@
 Turns a written script into voiceover audio on your own PC, in your own voice.
 
 ## Start
-Double-click **Voice Studio** on the Desktop (or `Voice Studio.bat` in this folder).
-The first start runs Setup. To add or repair a voice engine later, run `Setup.bat`.
+Open **Voice Studio** from the Desktop or Start menu. It opens in its own window; closing the window (or pressing
+**Quit**) stops it. Nothing runs in the background afterwards.
 
-To stop it, press **Quit** in the app or close the small black window.
+To add voice engines, press **Engines** at the top right, tick the ones you want and press **Download and install**.
+Progress is shown in the app. Each engine is a one-time download.
+
+If the window ever fails to open, `Voice Studio (browser mode).bat` runs the same app in a browser tab with a
+console window, which is useful for troubleshooting. `Setup.bat` does the same job as the Engines screen from a
+console.
 
 ## Voice engines
 | Engine | Where it runs | What it does |

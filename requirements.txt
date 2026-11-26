@@ -11,3 +11,4 @@ soxr
 pyloudnorm
 librosa
 azure-cognitiveservices-speech
+pywebview

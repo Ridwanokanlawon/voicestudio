@@ -16,6 +16,7 @@
     <button id="themeBtn" class="icon-btn" title="Switch light and dark" aria-label="Switch light and dark">
       <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 3a9 9 0 1 0 9 9c0-.5 0-.9-.1-1.4A6.5 6.5 0 0 1 12.4 3H12z"/></svg>
     </button>
+    <button id="enginesBtn" class="btn ghost">Engines</button>
     <button id="profilesBtn" class="btn ghost">Voice profiles</button>
     <button id="settingsBtn" class="btn ghost">Settings</button>
     <button id="quitBtn" class="btn ghost" title="Stop Voice Studio">Quit</button>
@@ -167,6 +168,22 @@
         <button id="recAgain" class="btn" type="button">Record again</button></div>
     </div>
     <p id="profMsg" class="error" hidden></p>
+  </div>
+</dialog>
+
+<dialog id="enginesDlg" class="wide">
+  <div class="dlg">
+    <div class="card-head"><h2>Engines</h2><button id="engClose" class="btn ghost" type="button">Close</button></div>
+    <p class="hint">Local voice engines run on this PC. Each one is downloaded once from its publisher and then works without the internet. Azure needs no download: add your key in Settings.</p>
+    <div id="packList" class="packs"></div>
+    <div class="row end"><button id="packInstall" class="btn primary" type="button">Download and install</button></div>
+    <div id="packProgress" class="pack-progress" hidden>
+      <div class="bar"><i id="packBar" class="indet"></i></div>
+      <div id="packStep" class="pack-step"></div>
+      <div id="packLine" class="hint"></div>
+      <div id="packMeta" class="hint"></div>
+    </div>
+    <p id="packMsg" class="hint"></p>
   </div>
 </dialog>
 

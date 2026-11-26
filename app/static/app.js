@@ -621,6 +621,51 @@ $("profSave").onclick = async () => {
   } catch (e) { profMsg(e.message); }
 };
 
+/* ---------- engines: download and install from inside the app ---------- */
+let packTimer = null;
+const packMsg = (t) => { $("packMsg").textContent = t || ""; };
+function renderPacks(st) {
+  const box = $("packList"), keep = {};
+  box.querySelectorAll("input[type=checkbox]").forEach((c) => { keep[c.value] = c.checked; });
+  box.replaceChildren();
+  for (const p of st.packs) {
+    const cb = el("input", { type: "checkbox", value: p.id, "aria-label": p.name });
+    cb.checked = p.installed || (keep[p.id] != null ? keep[p.id] : false) || st.installing.includes(p.id);
+    cb.disabled = p.installed || st.running;
+    box.append(el("label", { class: "pack" + (p.installed ? " done" : "") }, cb, el("span", { class: "name", text: p.name }),
+      el("span", { class: "size", text: p.installed ? "Installed" : p.size }), el("span", { class: "detail", text: p.detail })));
+  }
+  $("packInstall").disabled = st.running || st.packs.every((p) => p.installed);
+  $("packInstall").hidden = st.packs.every((p) => p.installed);
+  const prog = $("packProgress"); prog.hidden = !st.running;
+  if (st.running) {
+    $("packStep").textContent = st.step || "Starting";
+    $("packLine").textContent = st.line || "";
+    $("packMeta").textContent = `Running for ${fmt(st.elapsed)}` + (st.models_gb ? `. Model files on disk so far: ${st.models_gb} GB.` : ".") +
+      " Large downloads can sit on one line for several minutes. Keep Voice Studio open.";
+  }
+  if (st.done && !st.running) packMsg(st.error ? "It did not finish: " + st.error + " Press Download and install to try again; finished parts are skipped."
+    : "Done. The new engines are in the Engine list.");
+}
+async function pollPacks() {
+  clearTimeout(packTimer);
+  let st; try { st = await api("/api/setup"); } catch (e) { return packMsg(e.message); }
+  renderPacks(st);
+  if (st.running) packTimer = setTimeout(pollPacks, 1500);
+  else if (st.done) refresh().catch(() => {});
+  return st;
+}
+function openEngines() { packMsg(""); $("enginesDlg").showModal(); pollPacks(); }
+$("enginesBtn").onclick = openEngines;
+$("engClose").onclick = () => $("enginesDlg").close();
+$("packInstall").onclick = async () => {
+  const packs = [...$("packList").querySelectorAll("input[type=checkbox]")].filter((c) => c.checked && !c.disabled).map((c) => c.value);
+  if (!packs.length) return packMsg("Tick at least one engine.");
+  packMsg("");
+  try { renderPacks(await api("/api/setup", { body: { packs } })); packTimer = setTimeout(pollPacks, 1200); }
+  catch (e) { packMsg(e.message); }
+};
+
 /* ---------- startup ---------- */
 async function refresh() {
   const st = await api("/api/state");
@@ -646,6 +691,9 @@ async function refresh() {
     await refresh(); await loadHistory();
     const e = currentEngine();
     if (e && e.kind === "local" && e.status.state === "idle") activate(e.id);
+    const setup = await api("/api/setup");
+    if (setup.running) openEngines();
+    else if (!setup.packs.some((p) => p.installed) && !store.get("vs-engines-seen")) { store.set("vs-engines-seen", "1"); openEngines(); }
   } catch (e) { showError("Cannot reach the Voice Studio server. Is it still running?"); }
   setInterval(() => { const c = currentEngine();
     if (!S.job && (S.engines.some((e) => e.status.state === "loading") || (c && c.kind === "local" && c.status.state === "idle"))) refresh().catch(() => {}); }, 2000);

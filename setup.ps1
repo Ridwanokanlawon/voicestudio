@@ -99,7 +99,7 @@ Write-Host "Python: $script:BasePy"
 # ---- 1. Main app environment (small) ----------------------------------------
 $rt = Join-Path $root "runtime"
 $py = PyOf $rt
-$mainImports = "fastapi, uvicorn, keyring, lameenc, numpy, soundfile, soxr, pyloudnorm, librosa, azure.cognitiveservices.speech"
+$mainImports = "fastapi, uvicorn, keyring, lameenc, numpy, soundfile, soxr, pyloudnorm, librosa, azure.cognitiveservices.speech, webview"
 if (-not (Works $py $mainImports)) {
   Say "Main app environment (runtime\)"
   New-Venv $rt
@@ -180,10 +180,11 @@ if (-not $NoShortcut) {
   try {
     $lnk = Join-Path ([Environment]::GetFolderPath("Desktop")) "Voice Studio.lnk"
     $s = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk)
-    $s.TargetPath = Join-Path $root "Voice Studio.bat"
+    $s.TargetPath = Join-Path $root "runtime\Scripts\pythonw.exe"      # own window, no console
+    $s.Arguments = "-m app.desktop"
     $s.WorkingDirectory = $root
     $s.IconLocation = (Join-Path $root "assets\voicestudio.ico")
-    $s.WindowStyle = 7
+    $s.WindowStyle = 1
     $s.Description = "Voice Studio: scripts to voiceover"
     $s.Save()
     Write-Host "`nDesktop shortcut ready: $lnk"

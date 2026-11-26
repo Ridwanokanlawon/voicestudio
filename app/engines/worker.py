@@ -86,7 +86,7 @@ class WorkerEngine(Engine):
 
     def status(self):
         if not self.python().exists():
-            return {"state": "missing", "detail": "Not installed. Close Voice Studio, run Setup.bat and choose this engine."}
+            return {"state": "missing", "detail": "Not installed. Open Engines (top right) to download it."}
         if self._state == "loading":
             return {"state": "loading", "detail": self._detail}
         if not self.installed():

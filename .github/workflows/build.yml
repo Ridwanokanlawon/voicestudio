@@ -64,14 +64,23 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Run Setup exactly as a new PC would
+      - name: Prepare the app the way the installer does (no engines)
         shell: pwsh
         run: |
-          $engines = "${{ github.event.inputs.engines }}"
-          if (-not $engines) { $engines = "lite" }
-          powershell -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1 -Yes -NoShortcut -Engines $engines
+          powershell -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1 -Yes -NoShortcut -Engines none
           if ($LASTEXITCODE -ne 0) { Get-ChildItem C:\Temp\VoiceStudio_Setup_* | ForEach-Object { Get-Content "$($_.FullName)\setup.log" -Tail 80 }; exit 1 }
-      - name: Generate speech with each engine
+      - name: Open the standalone window
+        shell: pwsh
+        run: |
+          $env:VOICESTUDIO_WINDOW_TEST = "$PWD\window_test.txt"
+          $env:VOICESTUDIO_OUT = "$PWD\ci-out"
+          $p = Start-Process -FilePath .\runtime\Scripts\pythonw.exe -ArgumentList "-m", "app.desktop" -PassThru
+          $p | Wait-Process -Timeout 120 -ErrorAction SilentlyContinue
+          if (-not $p.HasExited) { $p | Stop-Process -Force }
+          if (Test-Path window_test.txt) { $r = Get-Content window_test.txt -Raw; Write-Host "window says: $r" } else { $r = "" ; Write-Host "no window result" }
+          Get-Content ci-out\VoiceStudio_logs\voicestudio.log -Tail 15 -ErrorAction SilentlyContinue
+          if ($r -notmatch "^Voice Studio\|[1-9]") { exit 1 }
+      - name: Install engines from inside the app, then generate speech
         shell: pwsh
         run: |
           $engines = "${{ github.event.inputs.engines }}"
@@ -80,7 +89,7 @@ jobs:
           if ($engines -match "lite") { $list += "kokoro", "pocket" }
           if ($engines -match "openvoice") { $list += "openvoice" }
           if ($engines -match "chatterbox") { $list += "chatterbox" }
-          & .\runtime\Scripts\python.exe tools\smoke_test.py @list
+          & .\runtime\Scripts\python.exe tools\smoke_test.py --install $engines @list
           if ($LASTEXITCODE -ne 0) { exit 1 }
       - name: Collect logs
         if: always()
@@ -89,6 +98,7 @@ jobs:
           New-Item -ItemType Directory -Force ci-logs | Out-Null
           Copy-Item C:\Temp\VoiceStudio_Setup_*\* ci-logs -ErrorAction SilentlyContinue
           Copy-Item models\fetch_*.log ci-logs -ErrorAction SilentlyContinue
+          Copy-Item ci-out\VoiceStudio_logs\* ci-logs -ErrorAction SilentlyContinue
       - name: Keep logs
         if: always()
         uses: actions/upload-artifact@v4

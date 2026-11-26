@@ -22,7 +22,7 @@ from . import settings
 from .paths import DATA, ROOT, stamp, version
 
 CONFIG = ROOT / "update.json"
-UPDATABLE = ["app", "assets", "Setup.bat", "setup.ps1", "Voice Studio.bat",
+UPDATABLE = ["app", "assets", "Setup.bat", "setup.ps1", "Voice Studio.bat", "Voice Studio (browser mode).bat",
              "Make Share Zip.bat", "make_share_zip.ps1", "requirements.txt", "requirements-chatterbox.txt",
              "requirements-openvoice.txt", "requirements-lite.txt", "installer", "tools", "README.md", "LICENSES.md", "VERSION", ".gitignore"]
 REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
