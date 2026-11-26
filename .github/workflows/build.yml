@@ -1,0 +1,86 @@
+name: Build and test
+
+# Builds the Windows installer and tests the app on a clean Windows machine.
+# - every push to main: build the installer (kept as a workflow artifact) and
+#   run the light-engine test
+# - a tag such as v0.3.0: also attach the installer to a DRAFT release, which
+#   stays private until it is published by hand
+# - "Run workflow" button: choose which engines to test
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      engines:
+        description: "Engines to install and test (lite, chatterbox, openvoice)"
+        default: "lite"
+
+permissions:
+  contents: write
+
+jobs:
+  installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $v = (Get-Content VERSION -Raw).Trim()
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress | Out-Null }
+          & $iscc "/DAppVersion=$v" installer\voicestudio.iss
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Get-ChildItem dist | Format-Table Name, Length
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VoiceStudio-Setup
+          path: dist/*.exe
+      - name: Attach to a draft release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ github.ref_name }}"
+          gh release view $tag 2>$null
+          if ($LASTEXITCODE -ne 0) { gh release create $tag --draft --title "Voice Studio $tag" --notes "Download VoiceStudio-Setup and run it. Windows shows an 'unknown publisher' notice because the installer is not code-signed: choose More info, then Run anyway." }
+          gh release upload $tag (Get-ChildItem dist\*.exe).FullName --clobber
+
+  test:
+    runs-on: windows-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run Setup exactly as a new PC would
+        shell: pwsh
+        run: |
+          $engines = "${{ github.event.inputs.engines }}"
+          if (-not $engines) { $engines = "lite" }
+          powershell -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1 -Yes -NoShortcut -Engines $engines
+          if ($LASTEXITCODE -ne 0) { Get-ChildItem C:\Temp\VoiceStudio_Setup_* | ForEach-Object { Get-Content "$($_.FullName)\setup.log" -Tail 80 }; exit 1 }
+      - name: Generate speech with each engine
+        shell: pwsh
+        run: |
+          $engines = "${{ github.event.inputs.engines }}"
+          if (-not $engines) { $engines = "lite" }
+          $list = @()
+          if ($engines -match "lite") { $list += "kokoro", "pocket" }
+          if ($engines -match "openvoice") { $list += "openvoice" }
+          if ($engines -match "chatterbox") { $list += "chatterbox" }
+          & .\runtime\Scripts\python.exe tools\smoke_test.py @list
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Keep logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs
+          path: |
+            C:\Temp\VoiceStudio_Setup_*\*
+            models\fetch_*.log
+          if-no-files-found: ignore

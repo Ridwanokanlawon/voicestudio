@@ -13,7 +13,7 @@ class OpenVoice(WorkerEngine):
     needs = ["openvoice/converter/checkpoint.pth", "melo/EN/checkpoint.pth",
              "hf_cache/hub/models--bert-base-uncased", "hf_cache/hub/models--M4869--WavMark",
              "nltk_data/corpora/cmudict", "nltk_data/taggers/averaged_perceptron_tagger"]
-    min_free_gb = 6.0
+    min_free_gb = 3.0
     fetch = "fetch_openvoice.py"
     uses_profiles = True
     extra_voices = [{"id": "base", "label": "Base voice only", "note": "accent without my tone"}]

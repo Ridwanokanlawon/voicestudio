@@ -1,6 +1,6 @@
 # Licences
 
-Checked on 16 November 2026 from PyPI, GitHub and Hugging Face. Re-check before
+Checked on 16 and 26 November 2026 from PyPI, GitHub and Hugging Face. Re-check before
 upgrading any version below.
 
 ## What is in the Voice Studio folder and repository
@@ -24,12 +24,18 @@ share zip. Setup downloads each of them from its original publisher onto each PC
 | wavmark 0.0.3 and M4869/WavMark | OpenVoice audio watermark (kept on) | MIT | Yes | small | pypi.org/project/wavmark |
 | g2p_en 2.1.0 | English pronunciation | Apache-2.0 | Yes | small | pypi.org/project/g2p-en |
 | NLTK data: cmudict, averaged_perceptron_tagger | Pronunciation data | cmudict: unrestricted for research or commercial use, credit Carnegie Mellon University; tagger: MIT | Yes | 13 MB | nltk.org/nltk_data |
+| kokoro 0.9.4, misaki 0.9.4 | Kokoro code and its text front end | Apache-2.0 | Yes | small | pypi.org/project/kokoro |
+| hexgrad/Kokoro-82M | Kokoro weights and preset voices | Apache-2.0 | Yes | 330 MB | huggingface.co/hexgrad/Kokoro-82M |
+| spaCy 3.8 and en_core_web_sm 3.8.0 | English text analysis for Kokoro | MIT | Yes | 13 MB | github.com/explosion/spacy-models |
+| pocket-tts 4.0.1 | Pocket TTS code | MIT | Yes | small | github.com/kyutai-labs/pocket-tts |
+| kyutai/pocket-tts-without-voice-cloning | Pocket TTS weights | CC BY 4.0 (credit Kyutai; their prohibited-use terms apply: no impersonation without consent, no deception) | Yes, with credit | 250 MB | huggingface.co/kyutai/pocket-tts-without-voice-cloning |
+| Pocket TTS preset voices offered in the app | Voice prompts | CC0 (voice donations, Voice-Zero) or CC BY 4.0 (VCTK, Alba MacKenna). The two non-commercial voices (Expresso, EARS) are left out | Yes, with credit for the CC BY ones | small | huggingface.co/kyutai/tts-voices |
 | PyTorch 2.6.0, torchaudio 2.6.0 | Runs the models | BSD-3-Clause | Yes | 2.5 GB (GPU build) | pytorch.org |
 | Azure AI Speech SDK | Azure voices (cloud, your own key) | Microsoft Software License Terms | Yes, under your Azure subscription terms | small | pypi.org/project/azure-cognitiveservices-speech |
 
 ## Other Python packages
 The exact versions are listed in `requirements.txt`, `requirements-chatterbox.txt`
-and `requirements-openvoice.txt`. A scan of both engine environments (76 and 84
+and `requirements-openvoice.txt`. A scan of the engine environments (76, 84 and 103
 packages) found only permissive licences (MIT, BSD, Apache-2.0, ISC, PSF), with
 these exceptions, none of which restrict use or sharing of this app:
 
@@ -38,6 +44,17 @@ these exceptions, none of which restrict use or sharing of this app:
 | soxr | LGPL-2.1-or-later | Resampling library, used unmodified as a separate installed package |
 | certifi, tqdm | MPL-2.0 (tqdm: MPL-2.0 and MIT) | Used unmodified |
 | eng_to_ipa | Package metadata is blank. Its repository states MIT; not independently confirmed | Small text helper |
+
+GPL components in the light environment (`envs\lite`): Kokoro's text front end uses
+phonemizer-fork (GPL-3.0-or-later) and espeak-ng through espeakng-loader (espeak-ng is
+GPL-3.0-or-later) to pronounce words that are not in its dictionary, and num2words
+(LGPL-2.1). Setup installs them from PyPI as separate packages; Voice Studio does not
+modify or bundle them, and using them places no restriction on the audio you make. They
+would matter only if the environments were ever bundled into one installer: the GPL
+then requires offering their source.
+
+Credit to give when you publish audio made with Pocket TTS: "Voice: Pocket TTS by Kyutai
+(CC BY 4.0)", plus the voice's source for CC BY voices (VCTK or Alba MacKenna).
 
 Left out on purpose: the upstream projects list a few GPL or LGPL helper packages
 that are only needed for languages or code paths Voice Studio does not use

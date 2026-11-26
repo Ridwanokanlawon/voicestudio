@@ -12,6 +12,40 @@ S = {"model": None, "default_conds": None, "ref": None, "ex": None}
 FILES = ["ve.safetensors", "t3_cfg.safetensors", "s3gen.safetensors", "tokenizer.json", "conds.pt"]
 
 
+def lean_load(d, dev):
+    """Same result as ChatterboxTTS.from_local, but each weight file is read
+    straight onto the target device and released before the next one, so the
+    PC's memory never has to hold two copies of the model at once."""
+    import gc
+    from pathlib import Path
+
+    import chatterbox.tts as ct
+    import torch
+    from safetensors.torch import load_file
+    d = Path(d)
+
+    def fill(module, name, strict=True):
+        state = load_file(str(d / name), device=dev)
+        if "model" in state:
+            state = state["model"][0]
+        module.load_state_dict(state, strict=strict, assign=True)
+        del state
+        gc.collect()
+        return module.to(dev).eval()
+
+    ve = fill(ct.VoiceEncoder(), "ve.safetensors")
+    _proto.step("voice encoder ready; " + _proto.mem_note())
+    t3 = fill(ct.T3(), "t3_cfg.safetensors")
+    _proto.step("text model ready; " + _proto.mem_note())
+    s3gen = fill(ct.S3Gen(), "s3gen.safetensors", strict=False)
+    _proto.step("speech model ready; " + _proto.mem_note())
+    tok = ct.EnTokenizer(str(d / "tokenizer.json"))
+    conds = None
+    if (d / "conds.pt").exists():
+        conds = ct.Conditionals.load(d / "conds.pt", map_location=torch.device("cpu") if dev == "cpu" else None).to(dev)
+    return ct.ChatterboxTTS(t3, s3gen, ve, tok, dev, conds=conds)
+
+
 def load(req):
     _proto.step("importing chatterbox")
     from chatterbox.tts import ChatterboxTTS
@@ -20,9 +54,17 @@ def load(req):
     if missing:
         raise RuntimeError("Chatterbox model files are missing. Run Setup.bat.")
     _proto.step("chatterbox imported; " + _proto.gpu_note())
-    S["model"] = ChatterboxTTS.from_local(d, _proto.device())
+    dev = _proto.device()
+    if os.environ.get("VOICESTUDIO_PLAIN_LOAD") == "1":
+        S["model"] = ChatterboxTTS.from_local(d, dev)
+    else:
+        try:
+            S["model"] = lean_load(d, dev)
+        except Exception as e:                  # fall back to the library's own loader
+            _proto.step(f"lean load failed ({type(e).__name__}: {e}); using the standard loader")
+            S["model"] = ChatterboxTTS.from_local(d, dev)
     S["default_conds"] = S["model"].conds
-    _proto.step("model loaded; " + _proto.gpu_note())
+    _proto.step("model loaded; " + _proto.gpu_note() + "; " + _proto.mem_note())
     return {"detail": f"Warm on {_proto.device_name()}", "sr": S["model"].sr}
 
 

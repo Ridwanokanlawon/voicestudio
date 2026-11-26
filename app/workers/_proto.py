@@ -16,6 +16,31 @@ def step(msg):
     print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] {msg}", file=sys.stderr, flush=True)
 
 
+def mem_note():
+    """Peak memory this worker has used so far."""
+    try:
+        if os.name == "nt":
+            import ctypes
+            from ctypes import wintypes
+
+            class PMC(ctypes.Structure):
+                _fields_ = [("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD)] + [
+                    (n, ctypes.c_size_t) for n in ("PeakWorkingSetSize", "WorkingSetSize", "QuotaPeakPagedPoolUsage",
+                                                   "QuotaPagedPoolUsage", "QuotaPeakNonPagedPoolUsage",
+                                                   "QuotaNonPagedPoolUsage", "PagefileUsage", "PeakPagefileUsage")]
+            c = PMC()
+            c.cb = ctypes.sizeof(PMC)
+            k = ctypes.windll.kernel32
+            k.GetCurrentProcess.restype = wintypes.HANDLE
+            k.K32GetProcessMemoryInfo.argtypes = [wintypes.HANDLE, ctypes.POINTER(PMC), wintypes.DWORD]
+            k.K32GetProcessMemoryInfo(k.GetCurrentProcess(), ctypes.byref(c), c.cb)
+            return f"peak RAM {c.PeakWorkingSetSize / 2**30:.1f} GB, peak commit {c.PeakPagefileUsage / 2**30:.1f} GB"
+        import resource
+        return f"peak RAM {resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 2**20:.1f} GB"
+    except Exception as e:
+        return f"memory check failed: {e}"
+
+
 def gpu_note():
     try:
         import torch

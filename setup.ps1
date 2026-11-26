@@ -6,7 +6,8 @@
 #   - Python 3.11 itself, only if this PC does not have it (you are asked first)
 #
 #   Setup.bat                      asks which voice engines to install
-#   Setup.bat -Engines chatterbox,openvoice -Yes     no questions
+#   Setup.bat -Engines lite,chatterbox,openvoice -Yes     no questions
+#   Setup.bat -Engines none -Yes   only the app itself (Azure voices)
 param([string[]]$Engines, [switch]$Yes, [switch]$NoShortcut)
 $ErrorActionPreference = "Continue"
 $root = $PSScriptRoot
@@ -17,6 +18,8 @@ $env:VOICESTUDIO_FETCH = "1"
 $env:PYTHONUTF8 = "1"
 $env:NLTK_DATA = Join-Path $models "nltk_data"      # keep pronunciation data inside the app folder
 $MELO_SRC = "https://github.com/myshell-ai/MeloTTS/archive/209145371cff8fc3bd60d7be902ea69cbdb7965a.zip"
+$SPACY_EN = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl"
+$PY_URL   = "https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe"
 $OV_SRC   = "https://github.com/myshell-ai/OpenVoice/archive/74a1d147b17a8c3092dd5430504bd83ef6c7eb23.zip"
 
 $logDir = "C:\Temp\VoiceStudio_Setup_$(Get-Date -Format yyyyMMdd-HHmmss)"
@@ -35,7 +38,16 @@ function Ask($question) {
   $a = Read-Host "$question [Y/n]"
   return ($a -eq "" -or $a -match "^[Yy]")
 }
-function Has311 { try { $null = & py -3.11 --version 2>&1; return ($LASTEXITCODE -eq 0) } catch { return $false } }
+function Find-Py311 {
+  # returns the path of a Python 3.11 interpreter, or $null
+  try { $p = & py -3.11 -c "import sys; print(sys.executable)" 2>$null; if ($LASTEXITCODE -eq 0 -and $p) { return "$p".Trim() } } catch { }
+  foreach ($c in @("$env:LOCALAPPDATA\Programs\Python\Python311\python.exe", "C:\Program Files\Python311\python.exe")) {
+    if (Test-Path $c) { return $c }
+  }
+  try { $v = & python -c "import sys; print(sys.version_info[:2] == (3, 11), sys.executable)" 2>$null
+        if ($LASTEXITCODE -eq 0 -and "$v" -match "^True (.+)$") { return $Matches[1].Trim() } } catch { }
+  return $null
+}
 function PyOf($envDir) { return (Join-Path $envDir "Scripts\python.exe") }
 function Works($py, $imports) {
   if (-not (Test-Path $py)) { return $false }
@@ -44,7 +56,7 @@ function Works($py, $imports) {
 }
 function New-Venv($dir) {
   if (Test-Path (PyOf $dir)) { return }
-  & py -3.11 -m venv $dir
+  & $script:BasePy -m venv $dir
   if ($LASTEXITCODE -ne 0) { Stop-Setup "Could not create the Python environment in $dir." }
   & (PyOf $dir) -m pip install --disable-pip-version-check --quiet --upgrade pip
 }
@@ -65,13 +77,24 @@ Write-Host "Voice Studio setup" -ForegroundColor Green
 Write-Host "Folder: $root"
 
 # ---- 0. Python 3.11 ---------------------------------------------------------
-if (-not (Has311)) {
+$script:BasePy = Find-Py311
+if (-not $script:BasePy) {
   Say "Python 3.11 is needed and was not found"
-  if (-not (Ask "Install Python 3.11 from the official source using winget?")) { Stop-Setup "Python 3.11 is required." }
-  winget install -e --id Python.Python.3.11 --accept-package-agreements --accept-source-agreements
-  $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
-  if (-not (Has311)) { Stop-Setup "Python was installed. Close this window and start Voice Studio again." }
+  if (-not (Ask "Install Python 3.11 for this user from python.org (25 MB)?")) { Stop-Setup "Python 3.11 is required." }
+  $ok = $false
+  try { winget install -e --id Python.Python.3.11 --scope user --accept-package-agreements --accept-source-agreements; $ok = ($LASTEXITCODE -eq 0) } catch { }
+  $script:BasePy = Find-Py311
+  if (-not $script:BasePy) {
+    Write-Host "Downloading the Python installer from python.org"
+    $inst = Join-Path $logDir "python-3.11.9-amd64.exe"
+    curl.exe -L --fail -o $inst $PY_URL
+    if ($LASTEXITCODE -ne 0) { Stop-Setup "Python could not be downloaded. Check the internet connection." }
+    Start-Process -FilePath $inst -ArgumentList "/quiet InstallAllUsers=0 PrependPath=0 Include_launcher=1 Include_test=0" -Wait
+    $script:BasePy = Find-Py311
+  }
+  if (-not $script:BasePy) { Stop-Setup "Python 3.11 was installed but could not be found. Close this window and run Setup.bat again." }
 }
+Write-Host "Python: $script:BasePy"
 
 # ---- 1. Main app environment (small) ----------------------------------------
 $rt = Join-Path $root "runtime"
@@ -85,16 +108,39 @@ if (-not (Works $py $mainImports)) {
 }
 
 # ---- 2. Which voice engines -------------------------------------------------
+$ltDone = (Works (PyOf (Join-Path $root "envs\lite")) "kokoro, pocket_tts, en_core_web_sm") -and (Test-Path (Join-Path $models "lite\kokoro.ok")) -and (Test-Path (Join-Path $models "lite\pocket.ok"))
 $cbDone = (Works (PyOf (Join-Path $root "envs\chatterbox")) "chatterbox.tts, perth") -and (Test-Path (Join-Path $models "chatterbox\t3_cfg.safetensors"))
 $ovDone = (Works (PyOf (Join-Path $root "envs\openvoice")) "melo, openvoice") -and (Test-Path (Join-Path $models "melo\EN\checkpoint.pth")) -and (Test-Path (Join-Path $models "openvoice\converter\checkpoint.pth")) -and (Test-Path (Join-Path $models "hf_cache\hub\models--M4869--WavMark")) -and (Test-Path (Join-Path $models "nltk_data\corpora\cmudict"))
 $want = @()
-if ($Engines) { $want = $Engines | ForEach-Object { $_.ToLower() } }
+if ($Engines) { $want = $Engines | ForEach-Object { $_.ToLower().Split(",") } | ForEach-Object { $_.Trim() } }
 else {
   Say "Voice engines (each runs on this PC in its own environment)"
+  if ($ltDone) { Write-Host "Kokoro and Pocket TTS: already installed" }
+  elseif (Ask "Install the light engines, Kokoro and Pocket TTS (preset voices, run on any PC; about 2 GB)?") { $want += "lite" }
   if ($cbDone) { Write-Host "Chatterbox: already installed" }
-  elseif (Ask "Install Chatterbox (voice cloning; about 5 GB of packages and 3.2 GB of model files)?") { $want += "chatterbox" }
+  elseif (Ask "Install Chatterbox (voice cloning; needs an NVIDIA GPU to be fast; about 8 GB)?") { $want += "chatterbox" }
   if ($ovDone) { Write-Host "OpenVoice v2: already installed" }
-  elseif (Ask "Install OpenVoice v2 with MeloTTS accents (about 5 GB of packages and 0.8 GB of model files)?") { $want += "openvoice" }
+  elseif (Ask "Install OpenVoice v2 with MeloTTS accents (your tone with a chosen accent; about 6 GB)?") { $want += "openvoice" }
+}
+
+# ---- 2b. Light engines: Kokoro and Pocket TTS (CPU) -------------------------
+if (($want -contains "lite") -and (-not $ltDone)) {
+  Say "Light engines environment (envs\lite)"
+  $e = Join-Path $root "envs\lite"; $p = PyOf $e
+  New-Venv $e
+  if (-not (Works $p "torch, kokoro, pocket_tts, en_core_web_sm")) {
+    if (-not (Works $p "torch")) {
+      & $p -m pip install --disable-pip-version-check torch==2.6.0 --index-url https://download.pytorch.org/whl/cpu
+      if ($LASTEXITCODE -ne 0) { Stop-Setup "PyTorch did not install. Check the internet connection and run Setup.bat again." }
+    }
+    & $p -m pip install --disable-pip-version-check -r (Join-Path $root "requirements-lite.txt")
+    if ($LASTEXITCODE -ne 0) { Stop-Setup "The light engine packages did not install. Run Setup.bat again." }
+    & $p -m pip install --disable-pip-version-check --no-deps $SPACY_EN
+    if (-not (Works $p "kokoro, pocket_tts, en_core_web_sm")) { Stop-Setup "Kokoro or Pocket TTS did not install correctly. See the log." }
+  } else { Write-Host "Packages already installed." }
+  Say "Kokoro and Pocket TTS model files (about 0.6 GB, one time)"
+  & $p (Join-Path $root "app\workers\fetch_lite.py") 2>&1 | Tee-Object -FilePath "$logDir\fetch_lite.txt"
+  if ($LASTEXITCODE -ne 0) { Stop-Setup "The light engine model files did not all download. The reason is in models\fetch_lite.log. Run Setup.bat again to resume." }
 }
 
 # ---- 3. Chatterbox ----------------------------------------------------------
@@ -146,6 +192,7 @@ if (-not $NoShortcut) {
 
 # ---- 6. Summary -------------------------------------------------------------
 Say "Installed"
+if (Test-Path (PyOf (Join-Path $root "envs\lite"))) { Write-Host "  lite (Kokoro, Pocket TTS) : installed, runs on the CPU" } else { Write-Host "  lite (Kokoro, Pocket TTS) : not installed (run Setup.bat again to add it)" }
 foreach ($n in @("chatterbox", "openvoice")) {
   $p = PyOf (Join-Path $root "envs\$n")
   if (Test-Path $p) {

@@ -11,9 +11,11 @@ To stop it, press **Quit** in the app or close the small black window.
 ## Voice engines
 | Engine | Where it runs | What it does |
 |---|---|---|
+| Kokoro | This PC, CPU only | 13 preset American and British voices. Small and fast: loads in seconds, about 1.3 GB of memory, no graphics card needed. |
+| Pocket TTS | This PC, CPU only | 19 preset voices. About 1 GB of memory, no graphics card needed. |
 | Chatterbox | This PC | Clones the voice in a voice profile. Controls: Expressiveness and Pacing. |
 | OpenVoice v2 | This PC | Speaks with a chosen English accent (American, British, Australian, Default, Indian), then applies the tone of a voice profile. |
-| Azure AI Speech | Cloud, your own key | Abeo, Ezinne and Andrew HD. |
+| Azure AI Speech | Cloud, your own key | Leah, Asilia, Sonia, Ryan, Harry, Harper, Emma HD, Andrew HD, Abeo and Ezinne. |
 
 Only one local engine is loaded at a time (8 GB graphics memory). Selecting another engine unloads the
 previous one; the pill at the top right shows "Loading engine..." and then turns green.
@@ -41,6 +43,14 @@ Local engines load one after another. Only one cloud voice per comparison.
 - No analytics or telemetry. The engines load their models from this folder with the network switched off.
   Network use is limited to Azure requests you start, the optional update check, and the
   **Download missing files** button (shown on an engine only when its model download did not finish).
+
+## Installer
+Every push to GitHub builds `VoiceStudio-Setup-<version>.exe` (see the repository's Actions tab) and tests the
+app on a clean Windows machine. Pushing a tag such as `v0.3.0` attaches the installer to a draft Release; publish
+the draft to make it downloadable and to switch on the in-app updater. The installer is small: it installs the app
+for the current user, then downloads the engines ticked during installation. It is not code-signed, so Windows
+shows an "unknown publisher" notice on first run (More info, then Run anyway). Uninstalling removes the app,
+environments and models but keeps `data\` (voice profiles and history).
 
 ## Share it with a friend
 Double-click `Make Share Zip.bat`. The zip leaves out the Python environments, your voice profiles, history,

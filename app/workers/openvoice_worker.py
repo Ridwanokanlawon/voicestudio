@@ -71,7 +71,7 @@ def load(req):
     S["conv"].load_ckpt(os.path.join(OV, "converter", "checkpoint.pth"))
     for acc, f in ACCENTS.items():
         S["src"][acc] = torch.load(os.path.join(OV, "base_speakers", "ses", f + ".pth"), map_location=dev)
-    _proto.step("converter loaded; " + _proto.gpu_note())
+    _proto.step("converter loaded; " + _proto.gpu_note() + "; " + _proto.mem_note())
     return {"detail": f"Warm on {_proto.device_name()}", "sr": int(S["tts"].hps.data.sampling_rate),
             "accents": list(S["tts"].hps.data.spk2id.keys())}
 

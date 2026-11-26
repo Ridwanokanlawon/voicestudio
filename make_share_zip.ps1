@@ -14,7 +14,7 @@ Write-Host "     the voice models on first start (about 9 GB, needs internet onc
 Write-Host "  2  Zip with the voice models inside (about 4 GB). First start still"
 Write-Host "     downloads the Python packages, but not the models."
 $choice = Read-Host "`nChoose 1 or 2"
-$skip = @("runtime", "envs", "data", "dist", "scripts", ".git")
+$skip = @("runtime", "envs", "data", "dist", "scripts", ".git", ".github")
 if ($choice -eq "2") { $name = "VoiceStudio_${ver}_with-models.zip" }
 else { $name = "VoiceStudio_${ver}.zip"; $skip += "models" }
 $items = Get-ChildItem -Force -Name | Where-Object { $skip -notcontains $_ }
