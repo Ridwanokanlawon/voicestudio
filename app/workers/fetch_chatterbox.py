@@ -3,6 +3,8 @@ import os
 import sys
 
 MODELS = os.environ["VOICESTUDIO_MODELS"]
+os.environ.pop("HF_HUB_OFFLINE", None)       # the app runs offline; a download must not inherit that
+os.environ.pop("TRANSFORMERS_OFFLINE", None)
 from huggingface_hub import hf_hub_download  # noqa: E402
 
 d = os.path.join(MODELS, "chatterbox")

@@ -91,6 +91,9 @@ def offline(models_dir):
     if os.environ.get("VOICESTUDIO_FETCH") != "1":
         os.environ["HF_HUB_OFFLINE"] = "1"
         os.environ["TRANSFORMERS_OFFLINE"] = "1"
+    else:                                   # downloading: make sure an inherited offline switch is cleared
+        os.environ.pop("HF_HUB_OFFLINE", None)
+        os.environ.pop("TRANSFORMERS_OFFLINE", None)
 
 
 def device():

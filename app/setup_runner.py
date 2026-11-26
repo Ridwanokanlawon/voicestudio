@@ -69,8 +69,11 @@ def _run(packs):
         flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
         with open(logf, "a", encoding="utf-8", errors="replace") as out:
             out.write(f"\n===== {time.strftime('%Y-%m-%d %H:%M:%S')} engines: {packs}\n")
+            env = dict(os.environ)
+            for k in ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "PYTHONPATH"):   # the app itself runs offline;
+                env.pop(k, None)                                                 # setup has to reach the internet
             p = subprocess.Popen(_command(packs), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-                                 encoding="utf-8", errors="replace", cwd=str(ROOT), creationflags=flags)
+                                 encoding="utf-8", errors="replace", cwd=str(ROOT), creationflags=flags, env=env)
             stopped = ""
             for raw in p.stdout:
                 line = raw.strip()
