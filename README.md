@@ -17,6 +17,7 @@ console.
 | Engine | Where it runs | What it does |
 |---|---|---|
 | Kokoro | This PC, CPU only | 13 preset American and British voices. Small and fast: loads in seconds, about 1.3 GB of memory, no graphics card needed. |
+| Qwen3-TTS | This PC, NVIDIA graphics card with 8 GB | Large model (1.7B) with nine preset voices; Ryan and Aiden are the native English ones. A **Delivery** setting (clear narrator, warm, serious, lively). About 9 GB on disk and about 7 GB of free memory to load. Without a graphics card it works but is very slow. |
 | Chatterbox | This PC | Clones the voice in a voice profile. Controls: Expressiveness and Pacing. |
 | OpenVoice v2 | This PC | Speaks with a chosen English accent (American, British, Australian, Default, Indian), then applies the tone of a voice profile. |
 | Azure AI Speech | Cloud, your own key | Leah, Asilia, Sonia, Ryan, Harry, Harper, Emma HD, Andrew HD, Abeo and Ezinne. |
@@ -110,17 +111,25 @@ environments and models but keeps `data\` (voice profiles and history).
 ## Share it with a friend
 Double-click `Make Share Zip.bat`. The zip leaves out the Python environments, your voice profiles, history,
 scripts and key. Your friend unzips it anywhere and double-clicks `Voice Studio.bat`; Setup asks which engines to
-install (Windows 10 or 11, internet for setup, about 20 GB free for all three local engines; an NVIDIA GPU with 8 GB makes
+install (Windows 10 or 11, internet for setup, about 30 GB free for all four local engines; an NVIDIA GPU with 8 GB makes
 the engines fast, without one they still work but slowly). Your friend records their own voice profile.
 
 Moving this folder on your own PC: move it, then run `Setup.bat` once to refresh the Desktop shortcut.
 
 ## Updates
 Settings > Updates. Updates come from the GitHub repository's Releases. Only the app's code is replaced; the old
-files are copied to `data\backups\` first. Restart Voice Studio afterwards (run `Setup.bat` once only if the app
+files are copied to `data\backups\` first. With **Install updates automatically at start-up** ticked (the default), the app
+checks when it starts, installs a newer release by itself and restarts; it never does this in the middle of a
+session. Versions up to 0.5.0 could not download updates (GitHub rejected the request), so those need the installer
+run once to reach 0.6.0 or later. Restart Voice Studio afterwards (run `Setup.bat` once only if the app
 says packages changed). Starting a new version while an older copy is still running stops the older one first; if
 the older one is in the middle of a generation it is left alone and you are told. To publish an update: change
 `VERSION`, push, wait for the build, then publish the draft Release it creates.
+
+## What changed in 0.6.0
+- Qwen3-TTS engine (Engines screen, about 9 GB).
+- Automatic updates at start-up, with a switch under Settings > General > Updates, and the app restarts itself.
+- Fixed: in-app updates failed with "GitHub answered with error 415" in every earlier version.
 
 ## What changed in 0.5.0
 - Pocket TTS removed (engine, downloads, setup, licences). The Engines screen offers to delete what it left on disk.

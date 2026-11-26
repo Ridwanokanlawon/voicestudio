@@ -12,6 +12,9 @@ from .paths import MODELS, ROOT, log_dir
 PACKS = [
     {"id": "lite", "name": "Kokoro", "size": "about 1.5 GB", "engines": ["kokoro"],
      "detail": "13 preset American and British voices. Light and quick: runs on any PC, no graphics card needed."},
+    {"id": "qwen", "name": "Qwen3-TTS", "size": "about 9 GB", "engines": ["qwen"],
+     "detail": "Large model with clear, natural preset voices and a delivery setting. Needs an NVIDIA graphics card "
+               "with 8 GB to be usable, and about 7 GB of free memory to load."},
     {"id": "openvoice", "name": "OpenVoice v2", "size": "about 6 GB", "engines": ["openvoice"],
      "detail": "Your own voice tone with a choice of English accent."},
     {"id": "chatterbox", "name": "Chatterbox", "size": "about 8 GB", "engines": ["chatterbox"],

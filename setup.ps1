@@ -6,7 +6,7 @@
 #   - Python 3.11 itself, only if this PC does not have it (you are asked first)
 #
 #   Setup.bat                      asks which voice engines to install
-#   Setup.bat -Engines lite,chatterbox,openvoice -Yes     no questions
+#   Setup.bat -Engines lite,qwen,chatterbox,openvoice -Yes     no questions
 #   Setup.bat -Engines none -Yes   only the app itself (Azure voices)
 param([string[]]$Engines, [switch]$Yes, [switch]$NoShortcut)
 $ErrorActionPreference = "Continue"
@@ -111,12 +111,15 @@ if (-not (Works $py $mainImports)) {
 $ltDone = (Works (PyOf (Join-Path $root "envs\lite")) "kokoro, en_core_web_sm") -and (Test-Path (Join-Path $models "lite\kokoro.ok"))
 $cbDone = (Works (PyOf (Join-Path $root "envs\chatterbox")) "chatterbox.tts, perth") -and (Test-Path (Join-Path $models "chatterbox\t3_cfg.safetensors"))
 $ovDone = (Works (PyOf (Join-Path $root "envs\openvoice")) "melo, openvoice") -and (Test-Path (Join-Path $models "melo\EN\checkpoint.pth")) -and (Test-Path (Join-Path $models "openvoice\converter\checkpoint.pth")) -and (Test-Path (Join-Path $models "hf_cache\hub\models--M4869--WavMark")) -and (Test-Path (Join-Path $models "nltk_data\corpora\cmudict"))
+$qwDone = (Works (PyOf (Join-Path $root "envs\qwen")) "qwen_tts") -and (Test-Path (Join-Path $models "qwen\Qwen3-TTS-12Hz-1.7B-CustomVoice.ok"))
 $want = @()
 if ($Engines) { $want = $Engines | ForEach-Object { $_.ToLower().Split(",") } | ForEach-Object { $_.Trim() } }
 else {
   Say "Voice engines (each runs on this PC in its own environment)"
   if ($ltDone) { Write-Host "Kokoro: already installed" }
   elseif (Ask "Install the light engine, Kokoro (preset voices, runs on any PC; about 1.5 GB)?") { $want += "lite" }
+  if ($qwDone) { Write-Host "Qwen3-TTS: already installed" }
+  elseif (Ask "Install Qwen3-TTS (large, clear preset voices; needs an NVIDIA GPU with 8 GB; about 9 GB)?") { $want += "qwen" }
   if ($cbDone) { Write-Host "Chatterbox: already installed" }
   elseif (Ask "Install Chatterbox (voice cloning; needs an NVIDIA GPU to be fast; about 8 GB)?") { $want += "chatterbox" }
   if ($ovDone) { Write-Host "OpenVoice v2: already installed" }
@@ -141,6 +144,23 @@ if (($want -contains "lite") -and (-not $ltDone)) {
   Say "Kokoro model files (about 0.35 GB, one time)"
   & $p (Join-Path $root "app\workers\fetch_lite.py") 2>&1 | Tee-Object -FilePath "$logDir\fetch_lite.txt"
   if ($LASTEXITCODE -ne 0) { Stop-Setup "The Kokoro model files did not all download. The reason is in models\fetch_lite.log. Run Setup.bat again to resume." }
+}
+
+# ---- 2c. Qwen3-TTS ----------------------------------------------------------
+if (($want -contains "qwen") -and (-not $qwDone)) {
+  Say "Qwen3-TTS environment (envs\qwen)"
+  $e = Join-Path $root "envs\qwen"; $p = PyOf $e
+  New-Venv $e
+  if (-not (Works $p "qwen_tts")) {
+    if (-not (Works $p "torch, torchaudio")) { Install-Torch $p }
+    & $p -m pip install --disable-pip-version-check -r (Join-Path $root "app\workers\requirements-qwen.txt")
+    if ($LASTEXITCODE -ne 0) { Stop-Setup "Qwen3-TTS packages did not install. Run Setup.bat again." }
+    & $p -m pip install --disable-pip-version-check --no-deps qwen-tts==0.1.1
+    if (-not (Works $p "qwen_tts")) { Stop-Setup "Qwen3-TTS did not install correctly. See the log." }
+  } else { Write-Host "Packages already installed." }
+  Say "Qwen3-TTS model files (about 4.5 GB, one time)"
+  & $p (Join-Path $root "app\workers\fetch_qwen.py") 2>&1 | Tee-Object -FilePath "$logDir\fetch_qwen.txt"
+  if ($LASTEXITCODE -ne 0) { Stop-Setup "The Qwen3-TTS model files did not download. The reason is in models\fetch_qwen.log. Run Setup.bat again to resume." }
 }
 
 # ---- 3. Chatterbox ----------------------------------------------------------
@@ -194,7 +214,7 @@ if (-not $NoShortcut) {
 # ---- 6. Summary -------------------------------------------------------------
 Say "Installed"
 if (Test-Path (PyOf (Join-Path $root "envs\lite"))) { Write-Host "  lite (Kokoro) : installed, runs on the CPU" } else { Write-Host "  lite (Kokoro) : not installed (run Setup.bat again to add it)" }
-foreach ($n in @("chatterbox", "openvoice")) {
+foreach ($n in @("qwen", "chatterbox", "openvoice")) {
   $p = PyOf (Join-Path $root "envs\$n")
   if (Test-Path $p) {
     & $p -c "import torch; ok=torch.cuda.is_available(); print('  $n : GPU ready' if ok else '  $n : CPU only (slow)', torch.cuda.get_device_name(0) if ok else '')"

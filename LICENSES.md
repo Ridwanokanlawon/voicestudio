@@ -27,12 +27,16 @@ share zip. Setup downloads each of them from its original publisher onto each PC
 | kokoro 0.9.4, misaki 0.9.4 | Kokoro code and its text front end | Apache-2.0 | Yes | small | pypi.org/project/kokoro |
 | hexgrad/Kokoro-82M | Kokoro weights and preset voices | Apache-2.0 | Yes | 330 MB | huggingface.co/hexgrad/Kokoro-82M |
 | spaCy 3.8 and en_core_web_sm 3.8.0 | English text analysis for Kokoro | MIT | Yes | 13 MB | github.com/explosion/spacy-models |
+| qwen-tts 0.1.1 | Qwen3-TTS code | Apache-2.0 | Yes | small | github.com/QwenLM/Qwen3-TTS |
+| Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice | Qwen3-TTS weights, speech tokenizer and nine preset voices | Apache-2.0 | Yes | 4.5 GB | huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice |
 | PyTorch 2.6.0, torchaudio 2.6.0 | Runs the models | BSD-3-Clause | Yes | 2.5 GB (GPU build) | pytorch.org |
 | Azure AI Speech SDK | Azure voices (cloud, your own key) | Microsoft Software License Terms | Yes, under your Azure subscription terms | small | pypi.org/project/azure-cognitiveservices-speech |
 
 ## Other Python packages
-The exact versions are listed in `requirements.txt`, `requirements-chatterbox.txt`
-and `requirements-openvoice.txt`. A scan of the engine environments (76, 84 and 103
+The exact versions are listed in `requirements.txt`, `requirements-chatterbox.txt`,
+`requirements-openvoice.txt` and `app\workers\requirements-qwen.txt` (the Qwen3-TTS
+environment, 49 packages plus PyTorch, scanned the same way: permissive licences, with
+soxr, certifi and tqdm as below). A scan of the engine environments (76, 84 and 103
 packages) found only permissive licences (MIT, BSD, Apache-2.0, ISC, PSF), with
 these exceptions, none of which restrict use or sharing of this app:
 

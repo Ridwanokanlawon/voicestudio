@@ -612,7 +612,7 @@ $("azForget").onclick = async () => { if (!confirm("Remove the Azure key and reg
   await api("/api/settings/azure", { method: "DELETE" }); azMsg("Removed."); refresh(); };
 const upMsg = (t) => { $("upMsg").textContent = t; };
 $("upSave").onclick = async () => {
-  try { await api("/api/update/settings", { body: { repo: $("upRepo").value, auto_check: $("upAuto").checked } }); upMsg("Saved."); }
+  try { await api("/api/update/settings", { body: { repo: $("upRepo").value, auto_check: $("upAuto").checked, auto_install: $("upInstall").checked } }); S.autoInstall = $("upInstall").checked; upMsg("Saved."); }
   catch (e) { upMsg(e.message); }
 };
 async function checkUpdate(force) {
@@ -625,14 +625,36 @@ async function checkUpdate(force) {
     const pill = $("updatePill"); pill.hidden = !r.newer;
     if (r.newer) { pill.textContent = `Update ${r.latest} available`; upMsg(`Version ${r.latest} is available (you have ${r.current}). ${r.notes || ""}`); }
     else if (force) upMsg(`You have the latest version (${r.current}).`);
+    return r;
   } catch (e) { if (force) upMsg(e.message); }
 }
 $("upCheck").onclick = () => checkUpdate(true);
+async function restartInto(version) {             // ask the app to restart, then reload this page when the new one answers
+  await api("/api/restart", { method: "POST" }).catch(() => {});
+  for (let i = 0; i < 90; i++) {
+    await new Promise((r) => setTimeout(r, 1000));
+    try { const st = await (await fetch("/api/state")).json(); if (!version || st.version === version) { location.reload(); return; } } catch (e) { /* not up yet */ }
+  }
+}
+async function autoUpdate(r) {                    // start-up only: never in the middle of a session
+  const key = "vs-autoupdate-" + r.latest, last = +(store.get(key) || 0);
+  if (Date.now() - last < 6 * 3600 * 1000) return;          // a failed try is not repeated for 6 hours
+  store.set(key, String(Date.now()));
+  const pill = $("updatePill"); pill.hidden = false; pill.textContent = `Installing update ${r.latest}...`;
+  showError(`Voice Studio is updating itself to ${r.latest} and will restart in a moment. The old files are backed up first.`);
+  try {
+    const out = await api("/api/update/apply", { method: "POST" });
+    if (!out.updated) { showError(""); return; }
+    upMsg(out.message + (out.backup ? ` Backup: ${out.backup}` : ""));
+    pill.textContent = "Restarting"; await restartInto(r.latest);
+  } catch (e) { pill.textContent = `Update ${r.latest} available`; showError(`The automatic update did not finish: ${e.message} You can retry under Settings, General, Updates.`); }
+}
 $("updatePill").onclick = () => openSettings("general");
 $("upApply").onclick = async () => {
   if (!confirm("Install the update now? The current app files are backed up first, then replaced. You will need to restart Voice Studio.")) return;
   upMsg("Downloading and installing");
-  try { const r = await api("/api/update/apply", { method: "POST" }); upMsg(r.message + (r.backup ? ` Backup: ${r.backup}` : "")); $("upApply").hidden = true; $("updatePill").hidden = true; }
+  try { const r = await api("/api/update/apply", { method: "POST" }); upMsg(r.message + (r.backup ? ` Backup: ${r.backup}` : "")); $("upApply").hidden = true; $("updatePill").hidden = true;
+    if (r.updated && confirm(`Updated to ${r.to}. Restart Voice Studio now?`)) { upMsg("Restarting"); restartInto(r.to); } }
   catch (e) { upMsg(e.message); }
 };
 
@@ -887,6 +909,8 @@ async function refresh() {
   $("azKey").placeholder = st.azure.configured ? "A key is saved. Paste a new one to replace it." : "Paste Key 1";
   if (document.activeElement !== $("upRepo")) $("upRepo").value = st.update.repo;
   $("upAuto").checked = st.update.auto_check;
+  if (document.activeElement !== $("upInstall")) $("upInstall").checked = st.update.auto_install !== false;
+  S.autoInstall = st.update.auto_install !== false;
   $("about").textContent = `Voice Studio ${st.version}. Runs on this PC at 127.0.0.1 only. Output folder: ${st.out_root}. ` +
     "No analytics or telemetry. The only network calls are Azure requests you start and the update check above. Voice profiles stay on this PC.";
   $("places").textContent = `This window is running the copy in ${st.root}` + (st.is_installed_copy ? " (the installed app)." : ".") +
@@ -919,5 +943,6 @@ async function refresh() {
   setInterval(() => { const c = currentEngine();
     const loading = !S.job && (S.engines.some((e) => e.status.state === "loading") || (c && c.kind === "local" && c.status.state === "idle"));
     if (loading || !S.reach || ++quiet >= 15) { quiet = 0; refresh().catch(() => {}); } }, 2000);
-  checkUpdate(false);
+  const up = await checkUpdate(false);
+  if (up && up.newer && S.autoInstall && !S.job && !$("script").value.trim()) autoUpdate(up);
 })();

@@ -536,6 +536,7 @@ class AzureBody(BaseModel):
 class UpdateBody(BaseModel):
     repo: Optional[str] = None
     auto_check: Optional[bool] = None
+    auto_install: Optional[bool] = None
     token: Optional[str] = None
 
 
@@ -554,8 +555,9 @@ def state():
             "azure": {"configured": bool(settings.get_secret("azure_key")),
                       "region": settings.get_secret("azure_region") or ""},
             "update": {"repo": updater.repo(), "auto_check": p.get("auto_check", True),
+                       "auto_install": p.get("auto_install", True),
                        "token": bool(settings.get_secret("github_token"))},
-            "busy": busy.locked(), "cloud_gap": CLOUD_MIN_GAP,
+            "busy": busy.locked(), "cloud_gap": CLOUD_MIN_GAP, "pid": os.getpid(),
             "root": str(ROOT), "data": str(DATA), "data_shared": DATA_SHARED,
             "installed": str(inst) if inst else "", "is_installed_copy": bool(inst and inst.resolve() == ROOT.resolve()),
             "pronunciations": pron.table(), "chunks_dir": extras.chunks_dir(),
@@ -1097,6 +1099,8 @@ def update_settings(b: UpdateBody):
             updater.set_repo(b.repo)
         if b.auto_check is not None:
             settings.set_prefs(auto_check=b.auto_check)
+        if b.auto_install is not None:
+            settings.set_prefs(auto_install=b.auto_install)
         if b.token is not None:
             (settings.set_secret("github_token", b.token.strip()) if b.token.strip()
              else settings.delete_secret("github_token"))
@@ -1123,6 +1127,30 @@ def update_apply():
         return updater.apply()
     except updater.UpdateError as e:
         fail(400, str(e))
+
+
+MODE = {"desktop": False}            # set by app.desktop: restart into the window, not the browser
+
+
+@app.post("/api/restart")
+def restart_app():
+    """Start a fresh copy of the app (used after an update) and end this one."""
+    if busy.locked() or setup_runner.S["running"]:
+        fail(409, "Wait for the current work to finish first.")
+    import subprocess
+    import sys
+    env = dict(os.environ, VOICESTUDIO_AFTER_RESTART="1", VOICESTUDIO_NO_BROWSER="1")
+    flags = (0x00000008 | 0x00000200) if os.name == "nt" else 0          # detached, own process group
+    subprocess.Popen([sys.executable, "-m", "app.desktop" if MODE["desktop"] else "app.server"], cwd=str(ROOT),
+                     env=env, creationflags=flags, close_fds=True,
+                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    log.info("Restarting Voice Studio")
+
+    def stop():
+        engines.shutdown()
+        os._exit(0)
+    threading.Timer(0.6, stop).start()
+    return {"restarting": True}
 
 
 @app.post("/api/quit")
@@ -1217,6 +1245,11 @@ def claim():
     (a second window). Anything else, an older version or another copy, is
     asked to stop so this one takes over; if it is in the middle of a
     generation it is left alone and the user is told."""
+    if os.environ.pop("VOICESTUDIO_AFTER_RESTART", "") == "1":      # we were started by the copy that is closing
+        for _ in range(100):
+            if not already_running():
+                break
+            time.sleep(0.2)
     if not already_running():
         return True, ""
     try:

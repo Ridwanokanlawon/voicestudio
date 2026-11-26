@@ -59,6 +59,7 @@ def main():
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
         except Exception:
             pass
+    server.MODE["desktop"] = True
     owner, problem = server.claim()
     if problem:                                  # an older copy could not be replaced: say so instead of showing its page
         server.log.warning(problem)

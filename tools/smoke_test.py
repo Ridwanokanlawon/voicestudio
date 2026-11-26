@@ -16,7 +16,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 PORT = 8791
 BASE = f"http://127.0.0.1:{PORT}"
-VOICE = {"kokoro": "bm_george", "chatterbox": "builtin", "openvoice": "base"}
+VOICE = {"kokoro": "bm_george", "qwen": "ryan", "chatterbox": "builtin", "openvoice": "base"}
 TEXT = "Your email filter checked every link. [pause] But this link was a picture."
 opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
@@ -73,6 +73,18 @@ def extras_check(out):
     code, st = call("/api/state")
     check(not any(e["id"] == "pocket" for e in st["engines"]) and not call("/api/cleanup")[1]["items"],
           "no Pocket TTS engine and nothing left behind on a new install")
+    pid = st.get("pid")
+    call("/api/restart", {})
+    back = None
+    for _ in range(40):
+        time.sleep(1)
+        try:
+            back = call("/api/state")[1]
+            if back.get("pid") != pid:
+                break
+        except Exception:
+            back = None
+    check(bool(back) and back.get("pid") != pid, f"the app restarts itself (process {pid} -> {back and back.get('pid')})")
     return bad
 
 

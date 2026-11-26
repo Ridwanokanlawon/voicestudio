@@ -99,7 +99,9 @@ def apply() -> dict:
     tmp = DATA / "updates" / f"{info['latest']}_{stamp()}"
     tmp.mkdir(parents=True)
     zpath = tmp / "update.zip"
-    with _get(info["zip"], accept="application/octet-stream") as resp, open(zpath, "wb") as f:
+    # GitHub answers 415 if this request asks for "application/octet-stream" (the bug that
+    # stopped in-app updates up to 0.5.0), so the default API media type is used.
+    with _get(info["zip"]) as resp, open(zpath, "wb") as f:
         shutil.copyfileobj(resp, f)
     with zipfile.ZipFile(zpath) as z:
         base = (tmp / "x").resolve()
