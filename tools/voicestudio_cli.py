@@ -4,6 +4,9 @@
   voicestudio-cli presets
   voicestudio-cli generate --preset "WCGW - Harry" --in script.txt --episode EP22
   voicestudio-cli generate --preset "WCGW - George" --in episodes.md --all-episodes
+  voicestudio-cli hide-voices azure sonia leah        (show-voices undoes it)
+  voicestudio-cli set-folder "C:\\Videos\\Renders\\_chunks"
+  voicestudio-cli save-preset --name "WCGW - Harry" --engine azure --voice harry --target 40-50
 
 It talks to the app on this PC (127.0.0.1) and nothing else, and prints one
 JSON object. Every safety rule of the app applies unchanged, because the work
@@ -92,6 +95,51 @@ def cmd_presets(a):
     return {"ok": True, "last": r["last"], "presets": r["presets"]}
 
 
+def _engine(st, name):
+    e = next((e for e in st["engines"] if name.lower() in (e["id"].lower(), e["name"].lower())), None)
+    if not e:
+        raise Stop(1, error=f"No engine called '{name}'.", engines=[e["id"] for e in st["engines"]])
+    return e
+
+
+def _voice_ids(e, names):
+    out = []
+    for n in names:
+        v = next((v for v in e["all_voices"] if n.lower() in (v["id"].lower(), v["label"].lower())), None)
+        if not v:
+            raise Stop(1, error=f"{e['name']} has no voice called '{n}'.", voices=[v["label"] for v in e["all_voices"]])
+        out.append(v["id"])
+    return out
+
+
+def cmd_voices(a):
+    """hide-voices / show-voices: the same switch as Settings, Voices."""
+    st = call("/api/state")
+    e = _engine(st, a.engine)
+    ids = _voice_ids(e, a.voices)
+    hidden = {x["id"]: [v["id"] for v in x["all_voices"] if v["hidden"]] for x in st["engines"]}
+    cur = set(hidden.get(e["id"], []))
+    cur = (cur | set(ids)) if a.cmd == "hide-voices" else (cur - set(ids))
+    hidden[e["id"]] = sorted(cur)
+    r = call("/api/settings/voices", {"hidden": {k: v for k, v in hidden.items() if v}})
+    return {"ok": True, "hidden": r["hidden"]}
+
+
+def cmd_folder(a):
+    return {"ok": True, "video_folder": call("/api/settings/folders", {"chunks_dir": a.path})["chunks_dir"]}
+
+
+def cmd_save_preset(a):
+    st = call("/api/state")
+    e = _engine(st, a.engine)
+    voice = _voice_ids(e, [a.voice])[0]
+    if any(loose(p["name"]) == loose(a.name) for p in st["presets"]) and not a.replace:
+        return {"ok": True, "kept": True, "note": f"A preset named '{a.name}' already exists and was left as it is. Add --replace to change it."}
+    p = call("/api/presets", {"name": a.name, "engine": e["id"], "voice": voice, "rate": a.rate, "pause_ms": a.pause,
+                              "gap_ms": a.gap, "mp3": a.mp3, "target": a.target or ""})
+    return {"ok": True, "preset": p}
+
+
 def cmd_generate(a):
     st = call("/api/state")
     presets = call("/api/presets")["presets"]
@@ -169,9 +217,26 @@ def main():
     g.add_argument("--no-mp3", dest="mp3", action="store_false", help="do not save an MP3")
     g.add_argument("--accept-warnings", action="store_true", help="send to a cloud voice even if the voice-safe check has warnings")
     g.add_argument("--quiet", action="store_true", help="no progress lines on stderr")
+    for name, text in (("hide-voices", "hide voices so they are never offered or used"), ("show-voices", "show hidden voices again")):
+        h = sub.add_parser(name, help=text)
+        h.add_argument("engine", help="engine, for example azure")
+        h.add_argument("voices", nargs="+", help="voice names, for example sonia leah")
+    f = sub.add_parser("set-folder", help="set the video folder that EPxx_audio.wav is copied to (empty text switches it off)")
+    f.add_argument("path")
+    sp = sub.add_parser("save-preset", help="save a preset")
+    sp.add_argument("--name", required=True)
+    sp.add_argument("--engine", required=True)
+    sp.add_argument("--voice", required=True)
+    sp.add_argument("--rate", type=float, default=1.0, help="speaking rate, 0.8 to 1.2 (default 1.0)")
+    sp.add_argument("--pause", type=int, default=700, help="[pause] length in ms (default 700)")
+    sp.add_argument("--gap", type=int, default=150, help="gap between sentences in ms (default 150)")
+    sp.add_argument("--mp3", action="store_true", help="also save an MP3")
+    sp.add_argument("--target", help="target length in seconds, for example 40-50")
+    sp.add_argument("--replace", action="store_true", help="change the preset if one with this name exists")
     a = ap.parse_args()
     try:
-        out, code = {"status": cmd_status, "presets": cmd_presets, "generate": cmd_generate}[a.cmd](a), 0
+        out, code = {"status": cmd_status, "presets": cmd_presets, "generate": cmd_generate, "hide-voices": cmd_voices,
+                     "show-voices": cmd_voices, "set-folder": cmd_folder, "save-preset": cmd_save_preset}[a.cmd](a), 0
         if not out.get("ok", True):
             code = 1
     except Stop as e:

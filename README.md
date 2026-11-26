@@ -60,6 +60,10 @@ previous one; the pill at the top right shows "Loading engine..." and then turns
     voicestudio-cli generate --preset "WCGW - Harry" --in script.txt --episode EP22
     voicestudio-cli generate --preset "WCGW - George" --in episodes.md --all-episodes
 
+    voicestudio-cli hide-voices azure sonia leah
+    voicestudio-cli set-folder "C:\Videos\Renders\_chunks"
+    voicestudio-cli save-preset --name "WCGW - Harry" --engine azure --voice harry --target 40-50
+
 `generate` prints the WAV, MP3 and caption paths, the duration, the estimate and where the copy went. The app does
 the work, so its safety rules apply unchanged: one cloud request per run, no retries, 3 seconds between cloud
 requests, voice-safe check first. If that check has warnings for a cloud voice, nothing is sent unless you add
