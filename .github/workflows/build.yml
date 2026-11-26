@@ -75,12 +75,17 @@ jobs:
           if ($engines -match "chatterbox") { $list += "chatterbox" }
           & .\runtime\Scripts\python.exe tools\smoke_test.py @list
           if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Collect logs
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force ci-logs | Out-Null
+          Copy-Item C:\Temp\VoiceStudio_Setup_*\* ci-logs -ErrorAction SilentlyContinue
+          Copy-Item models\fetch_*.log ci-logs -ErrorAction SilentlyContinue
       - name: Keep logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: logs
-          path: |
-            C:\Temp\VoiceStudio_Setup_*\*
-            models\fetch_*.log
+          path: ci-logs
           if-no-files-found: ignore
