@@ -161,3 +161,31 @@ dialog.wide { width: min(720px, calc(100vw - 32px)); }
 .bar i.indet { width: 35%; animation: slide 1.6s ease-in-out infinite; }
 @keyframes slide { 0% { margin-left: -35%; } 100% { margin-left: 100%; } }
 @media (prefers-reduced-motion: reduce) { .bar i.indet { animation: none; width: 100%; opacity: .5; } }
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+.field2 { display: grid; gap: 4px; }
+.field2 label { color: var(--muted); font-size: 13px; }
+.field2 input { width: 100%; }
+.estimate { margin-top: 10px; background: var(--bg); border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 8px; padding: 9px 12px; font-size: 13.5px; display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+.estimate.off { border-left-color: var(--warn); }
+.wide-btn { width: 100%; margin-top: 8px; padding: 10px; }
+.batch { margin-top: 12px; display: grid; gap: 6px; }
+.batch .b-row { display: grid; grid-template-columns: 70px 1fr; gap: 10px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; font-size: 13px; }
+.batch .b-row b { font-weight: 600; }
+.batch .b-row span { color: var(--muted); overflow-wrap: anywhere; }
+.batch .b-row.bad span { color: var(--danger); }
+.sentences .said { font-size: 12px; color: var(--accent); padding-left: 6px; }
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 6px; flex-wrap: wrap; }
+.tab { background: transparent; border: 0; border-bottom: 2px solid transparent; padding: 8px 12px; cursor: pointer; color: var(--muted); }
+.tab.sel { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+.vt-group { margin: 12px 0; }
+.vt-group h3 { margin: 0 0 6px; }
+.vt-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 4px 12px; }
+.vt-list label { display: flex; gap: 8px; align-items: center; font-size: 14px; }
+.vt-list small { color: var(--muted); }
+.vt-list input { accent-color: var(--accent); width: 16px; height: 16px; }
+.pron-head, .pron-row { display: grid; grid-template-columns: 1fr 1fr 34px; gap: 8px; align-items: center; margin: 6px 0; }
+.pron-head { color: var(--muted); font-size: 13px; }
+.pron-row input { width: 100%; }
+#chunksDir { width: 100%; }
+#presetSel { max-width: 190px; }
+@media (max-width: 760px) { .pair { grid-template-columns: 1fr; } }

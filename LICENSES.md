@@ -27,9 +27,6 @@ share zip. Setup downloads each of them from its original publisher onto each PC
 | kokoro 0.9.4, misaki 0.9.4 | Kokoro code and its text front end | Apache-2.0 | Yes | small | pypi.org/project/kokoro |
 | hexgrad/Kokoro-82M | Kokoro weights and preset voices | Apache-2.0 | Yes | 330 MB | huggingface.co/hexgrad/Kokoro-82M |
 | spaCy 3.8 and en_core_web_sm 3.8.0 | English text analysis for Kokoro | MIT | Yes | 13 MB | github.com/explosion/spacy-models |
-| pocket-tts 4.0.1 | Pocket TTS code | MIT | Yes | small | github.com/kyutai-labs/pocket-tts |
-| kyutai/pocket-tts-without-voice-cloning | Pocket TTS weights | CC BY 4.0 (credit Kyutai; their prohibited-use terms apply: no impersonation without consent, no deception) | Yes, with credit | 250 MB | huggingface.co/kyutai/pocket-tts-without-voice-cloning |
-| Pocket TTS preset voices offered in the app | Voice prompts | CC0 (voice donations, Voice-Zero) or CC BY 4.0 (VCTK, Alba MacKenna). The two non-commercial voices (Expresso, EARS) are left out | Yes, with credit for the CC BY ones | small | huggingface.co/kyutai/tts-voices |
 | PyTorch 2.6.0, torchaudio 2.6.0 | Runs the models | BSD-3-Clause | Yes | 2.5 GB (GPU build) | pytorch.org |
 | Azure AI Speech SDK | Azure voices (cloud, your own key) | Microsoft Software License Terms | Yes, under your Azure subscription terms | small | pypi.org/project/azure-cognitiveservices-speech |
 
@@ -53,8 +50,9 @@ modify or bundle them, and using them places no restriction on the audio you mak
 would matter only if the environments were ever bundled into one installer: the GPL
 then requires offering their source.
 
-Credit to give when you publish audio made with Pocket TTS: "Voice: Pocket TTS by Kyutai
-(CC BY 4.0)", plus the voice's source for CC BY voices (VCTK or Alba MacKenna).
+Removed in 0.5.0: Pocket TTS (Kyutai), with its code, weights and preset voices. Nothing
+from it is installed by setup any more. Audio you already made with it keeps its credit
+line: "Voice: Pocket TTS by Kyutai (CC BY 4.0)".
 
 Left out on purpose: the upstream projects list a few GPL or LGPL helper packages
 that are only needed for languages or code paths Voice Studio does not use

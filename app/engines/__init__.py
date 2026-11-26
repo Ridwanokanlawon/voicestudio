@@ -11,8 +11,8 @@ from .base import Engine, EngineError  # noqa: F401
 log = logging.getLogger("voicestudio")
 _engines = {}
 _load_lock = threading.Lock()
-ORDER = {"azure": 0, "kokoro": 1, "pocket": 2, "chatterbox": 3, "openvoice": 4}
-REMOVED = {"yarngpt_engine"}          # retired engines: ignored even if the file is still on disk
+ORDER = {"azure": 0, "kokoro": 1, "chatterbox": 3, "openvoice": 4}
+REMOVED = {"yarngpt_engine", "pocket_engine"}          # retired engines: ignored even if the file is still on disk
 SKIP = {"base", "worker"}
 
 

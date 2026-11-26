@@ -1,14 +1,16 @@
 "use strict";
 const $ = (id) => document.getElementById(id);
 const S = { engines: [], engine: null, voice: {}, session: null, job: null, episodes: [], label: "script",
-            peaks: null, lastCloud: 0, cloudGap: 3, playing: null, params: {}, prof: null, cmp: [] };
+            peaks: null, lastCloud: 0, cloudGap: 3, playing: null, params: {}, prof: null, cmp: [],
+            presets: [], preset: "", rawText: "", chunksDir: "", pron: [], reach: true };
 
 async function api(path, opts = {}) {
   const o = { method: opts.method || (opts.body ? "POST" : "GET"), headers: {} };
   if (opts.body) { o.headers["Content-Type"] = "application/json"; o.body = JSON.stringify(opts.body); }
   let r;
   try { r = await fetch(path, o); }
-  catch (e) { throw new Error("Voice Studio is not running. Start it again from the Desktop shortcut, then reload this page."); }
+  catch (e) { reach(false); throw new Error("Voice Studio is not running. Start it again from the Desktop shortcut, then reload this page."); }
+  reach(true);
   let data = null;
   try { data = await r.json(); } catch (e) { /* no body */ }
   if (!r.ok) throw new Error((data && data.detail) || `Error ${r.status}`);
@@ -27,6 +29,13 @@ const store = { get(k) { try { return localStorage.getItem(k); } catch (e) { ret
                 set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* fine */ } } };
 const fmt = (s) => { s = Math.max(0, s || 0); return `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`; };
 function showError(msg) { const e = $("formError"); e.textContent = msg || ""; e.hidden = !msg; }
+const UNREACHABLE = "Cannot reach the Voice Studio server. Is it still running?";
+function reach(ok) {                 // the "cannot reach" line appears only while the server is silent, and clears itself
+  if (ok === S.reach) return; S.reach = ok;
+  const e = $("formError");
+  if (!ok) { if (e.hidden) showError(UNREACHABLE); }
+  else if (e.textContent === UNREACHABLE || e.textContent.startsWith("Voice Studio is not running")) showError("");
+}
 
 /* ---------- theme ---------- */
 function setTheme(t) { document.documentElement.dataset.theme = t; store.set("vs-theme", t); drawWave(); }
@@ -53,7 +62,7 @@ function renderEngines() {
         refresh().catch(() => {}); };
       row.append(b);
     }
-    radio.onchange = () => { S.engine = e.id; store.set("vs-engine", e.id); renderEngines(); renderVoices(); renderParams(); syncControls();
+    radio.onchange = () => { S.engine = e.id; store.set("vs-engine", e.id); renderEngines(); renderVoices(); renderParams(); syncControls(); runEstimate();
       if (e.kind === "local" && ["idle", "error"].includes(e.status.state)) activate(e.id); };
     box.append(row);
   }
@@ -72,7 +81,7 @@ function renderVoices() {
   S.voice[e.id] = ids.includes(saved) ? saved : ids[0];
   for (const v of e.voices) {
     box.append(el("button", { class: "voice" + (S.voice[e.id] === v.id ? " sel" : ""), type: "button",
-      onclick: () => { S.voice[e.id] = v.id; store.set("vs-voice-" + e.id, v.id); renderVoices(); } },
+      onclick: () => { S.voice[e.id] = v.id; store.set("vs-voice-" + e.id, v.id); renderVoices(); runEstimate(); } },
       document.createTextNode(v.label), el("small", { text: v.note || "" })));
   }
   $("noProfiles").hidden = !(e.uses_profiles && !ids.some((i) => i.startsWith("p:")));
@@ -118,15 +127,18 @@ function syncControls() {
   const usable = !["missing", "unconfigured"].includes(e.status.state);
   $("genBtn").disabled = $("previewBtn").disabled = $("cmpBtn").disabled = !usable || !!S.job;
   $("cmpBtn").disabled = !!S.job;
+  const all = $("allBtn"); all.hidden = !(S.episodes.length > 1 && !cloud);
+  all.textContent = `Generate all ${S.episodes.length} episodes`; all.disabled = !usable || !!S.job;
   runCheck();
 }
 for (const [id, out, unit] of [["rate", "rateOut", "%"], ["pause", "pauseOut", " ms"], ["gap", "gapOut", " ms"]]) {
-  $(id).oninput = () => { $(out).textContent = (id === "rate" ? Math.round($(id).value * 100) : $(id).value) + unit; };
+  $(id).oninput = () => { $(out).textContent = (id === "rate" ? Math.round($(id).value * 100) : $(id).value) + unit; runEstimate(); };
 }
+function setSlider(id, v) { $(id).value = v; $(id).oninput(); }
 
 /* ---------- script input ---------- */
 $("openBtn").onclick = () => $("fileIn").click();
-$("clearBtn").onclick = () => { $("script").value = ""; S.episodes = []; S.label = "script"; $("episodeSel").hidden = true; runCheck(); };
+$("clearBtn").onclick = () => { $("script").value = ""; S.episodes = []; S.rawText = ""; S.label = "script"; $("episodeSel").hidden = true; $("episode").value = ""; episodeNote(); syncControls(); };
 function parseEpisodes(md) {
   const heads = [...md.matchAll(/^## (EP\d+) \|[ \t]*(.*?)[ \t]*$/gm)], eps = [];
   heads.forEach((h, i) => {
@@ -138,16 +150,17 @@ function parseEpisodes(md) {
 }
 function loadText(text, name) {
   text = text.replace(/^\uFEFF/, "").replace(/\r/g, "");
-  S.episodes = parseEpisodes(text);
+  S.episodes = parseEpisodes(text); S.rawText = text;
   const sel = $("episodeSel"); sel.replaceChildren();
   if (S.episodes.length) {
     for (const [i, ep] of S.episodes.entries()) sel.append(el("option", { value: i, text: `${ep.id} | ${ep.title}` }));
     sel.hidden = false; pickEpisode(0);
   } else {
     sel.hidden = true; S.label = (name || "script").replace(/\.[^.]+$/, "").replace(/[^A-Za-z0-9_-]+/g, "").slice(0, 40) || "script";
-    $("script").value = text; runCheck();
+    $("script").value = text;
+    const m = /^(EP\d+)/i.exec(S.label); $("episode").value = m ? m[1].toUpperCase() : "";
   }
-  showError("");
+  episodeNote(); syncControls(); showError("");
 }
 async function openFile(f) {
   if (!f) return;
@@ -175,7 +188,16 @@ box.addEventListener("paste", (e) => {           // Ctrl+V of a copied file open
 ["dragenter", "dragover"].forEach((n) => box.addEventListener(n, (e) => { e.preventDefault(); box.classList.add("drop"); }));
 ["dragleave", "drop"].forEach((n) => box.addEventListener(n, () => box.classList.remove("drop")));
 box.addEventListener("drop", (e) => { const f = e.dataTransfer && e.dataTransfer.files[0]; if (f) { e.preventDefault(); openFile(f); } });
-function pickEpisode(i) { const ep = S.episodes[i]; if (!ep) return; $("script").value = ep.text; S.label = ep.id; runCheck(); }
+function pickEpisode(i) { const ep = S.episodes[i]; if (!ep) return; $("script").value = ep.text; S.label = ep.id; $("episode").value = ep.id; episodeNote(); runCheck(); }
+function episodeCode() { return $("episode").value.trim(); }
+function episodeNote() {
+  const ep = episodeCode(), n = $("episodeNote");
+  if (ep && !/^[A-Za-z0-9][A-Za-z0-9_-]{0,29}$/.test(ep)) n.textContent = "The episode code may contain only letters, digits, - and _.";
+  else if (ep && S.chunksDir) n.textContent = `The finished WAV is also copied to ${S.chunksDir}\\${ep}_audio.wav. A file already there is never replaced without asking.`;
+  else if (ep) n.textContent = "To also copy the finished WAV into your video folder, set that folder under Settings, Folders.";
+  else n.textContent = "";
+}
+$("episode").oninput = episodeNote;
 $("episodeSel").onchange = (e) => pickEpisode(+e.target.value);
 
 /* ---------- voice-safe check (local, never blocks) ---------- */
@@ -183,16 +205,16 @@ let checkTimer = null, lastCheck = { warnings: [] };
 function runCheck() { clearTimeout(checkTimer); checkTimer = setTimeout(doCheck, 350); }
 async function doCheck() {
   const text = $("script").value;
-  if (!text.trim()) { $("scriptMeta").textContent = "0 words"; $("safe").hidden = true; lastCheck = { warnings: [] }; return lastCheck; }
+  if (!text.trim()) { $("scriptMeta").textContent = "0 words"; $("safe").hidden = true; $("estimate").hidden = true; lastCheck = { warnings: [] }; return lastCheck; }
   try {
     const r = await api("/api/check", { body: { text } });
     lastCheck = r;
-    const secs = r.words / 2.5 + r.pauses * ($("pause").value / 1000);
-    $("scriptMeta").textContent = `${r.words} words, ${r.sentences} sentences, ${r.pauses} pause${r.pauses === 1 ? "" : "s"}, about ${fmt(secs)} spoken`;
+    $("scriptMeta").textContent = `${r.words} words, ${r.sentences} sentences, ${r.pauses} pause${r.pauses === 1 ? "" : "s"}`;
+    runEstimate();
     const cloud = currentEngine() && currentEngine().kind === "cloud";
     renderWarnings($("safe"), r.warnings, cloud
       ? "Voice-safe check: review these before sending to the cloud engine."
-      : "Voice-safe check: fine for YarnGPT (it runs on this PC). These lines would matter for a cloud engine.");
+      : "Voice-safe check: fine for an engine that runs on this PC. These lines would matter for a cloud engine.");
     return r;
   } catch (e) { return lastCheck; }
 }
@@ -211,6 +233,67 @@ function renderWarnings(box, warnings, heading) {
   }
 }
 $("script").addEventListener("input", runCheck);
+
+/* ---------- estimated length and target ---------- */
+let estTimer = null;
+function runEstimate() { clearTimeout(estTimer); estTimer = setTimeout(doEstimate, 400); }
+async function doEstimate() {
+  const e = currentEngine(), box = $("estimate"), text = $("script").value;
+  if (!e || !text.trim() || !S.voice[e.id]) { box.hidden = true; return; }
+  try {
+    const r = await api("/api/estimate", { body: { text, engine: e.id, voice: S.voice[e.id], rate: +$("rate").value,
+      pause_ms: +$("pause").value, gap_ms: +$("gap").value, target: $("target").value } });
+    if (r.empty) { box.hidden = true; return; }
+    box.hidden = false; box.classList.toggle("off", r.fit === "long" || r.fit === "short");
+    $("estText").textContent = r.message;
+    const b = $("estApply"), want = r.suggest_rate;
+    b.hidden = !(want && Math.abs(want - +$("rate").value) > 0.004);
+    if (!b.hidden) { b.textContent = `Set rate to ${Math.round(want * 100)}%`; b.onclick = () => setSlider("rate", want); }
+  } catch (x) { box.hidden = true; }
+}
+$("target").oninput = () => { store.set("vs-target", $("target").value); runEstimate(); };
+
+/* ---------- presets ---------- */
+function renderPresets() {
+  const sel = $("presetSel"); sel.replaceChildren(el("option", { value: "", text: "No preset" }));
+  for (const p of S.presets) sel.append(el("option", { value: p.name, text: p.name }));
+  if (!S.presets.some((p) => p.name === S.preset)) S.preset = "";
+  sel.value = S.preset; $("presetDel").hidden = !S.preset;
+}
+function applyPreset(name, quiet) {
+  const p = S.presets.find((x) => x.name === name);
+  S.preset = p ? p.name : ""; renderPresets();
+  api("/api/presets/last", { body: { name: S.preset } }).catch(() => {});
+  if (!p) return;
+  const e = S.engines.find((x) => x.id === p.engine);
+  if (!e) { if (!quiet) showError(`The preset "${p.name}" uses an engine this copy of the app does not have.`); return; }
+  S.engine = e.id; store.set("vs-engine", e.id);
+  if (e.voices.some((v) => v.id === p.voice)) { S.voice[e.id] = p.voice; store.set("vs-voice-" + e.id, p.voice); }
+  else if (!quiet) showError(`The preset "${p.name}" uses a voice that is hidden or no longer exists. Pick a voice and save the preset again.`);
+  for (const [k, v] of Object.entries(p.params || {})) setParam(e, k, v);
+  setSlider("rate", p.rate); setSlider("pause", p.pause_ms); setSlider("gap", p.gap_ms);
+  $("mp3").checked = !!p.mp3 && !$("mp3").disabled;
+  $("target").value = p.target || ""; store.set("vs-target", $("target").value);
+  renderEngines(); renderVoices(); renderParams(); syncControls(); runEstimate();
+  if (e.kind === "local" && ["idle", "error"].includes(e.status.state)) activate(e.id);
+}
+$("presetSel").onchange = (ev) => { showError(""); applyPreset(ev.target.value); };
+$("presetSave").onclick = async () => {
+  const e = currentEngine(); if (!e) return;
+  const v = e.voices.find((x) => x.id === S.voice[e.id]);
+  const name = prompt("Name for this preset (engine, voice, rate, pauses, MP3 and target length are saved)", S.preset || `${v ? v.label : e.name}`);
+  if (!name || !name.trim()) return;
+  try {
+    const p = await api("/api/presets", { body: { name: name.trim(), engine: e.id, voice: S.voice[e.id], rate: +$("rate").value,
+      pause_ms: +$("pause").value, gap_ms: +$("gap").value, mp3: $("mp3").checked, params: paramValues(e), target: $("target").value } });
+    S.presets = (await api("/api/presets")).presets; S.preset = p.name; renderPresets(); showError("");
+  } catch (x) { showError(x.message); }
+};
+$("presetDel").onclick = async () => {
+  if (!S.preset || !confirm(`Delete the preset "${S.preset}"?`)) return;
+  try { await api("/api/presets?name=" + encodeURIComponent(S.preset), { method: "DELETE" });
+    S.presets = (await api("/api/presets")).presets; S.preset = ""; renderPresets(); } catch (x) { showError(x.message); }
+};
 
 /* ---------- generate / preview ---------- */
 function confirmCloud(warnings) {
@@ -237,11 +320,41 @@ async function generate(preview) {
   try {
     const job = await api("/api/generate", { body: {
       text, engine: e.id, voice: S.voice[e.id], rate: +$("rate").value, pause_ms: +$("pause").value,
-      gap_ms: +$("gap").value, preview, mp3: $("mp3").checked, label: S.label, params: paramValues(e) } });
+      gap_ms: +$("gap").value, preview, mp3: $("mp3").checked, label: S.label, params: paramValues(e),
+      episode: preview ? "" : episodeCode(), if_exists: "ask" } });
     watch(job, preview);
   } catch (err) { showError(err.message); }
 }
 $("genBtn").onclick = () => generate(false);
+
+/* ---------- all episodes in a file (engines on this PC only) ---------- */
+$("allBtn").onclick = async () => {
+  const e = currentEngine(); if (!e || S.job || e.kind === "cloud" || S.episodes.length < 2) return;
+  showError("");
+  const copy = S.chunksDir ? ` Each finished WAV is also copied to the video folder as EPxx_audio.wav; a file already there is kept and the new one is saved as _v2.` : "";
+  if (!confirm(`Generate all ${S.episodes.length} episodes in this file with ${e.name}, one after another?${copy}`)) return;
+  try {
+    const job = await api("/api/generate_all", { body: { text: S.rawText, engine: e.id, voice: S.voice[e.id], rate: +$("rate").value,
+      pause_ms: +$("pause").value, gap_ms: +$("gap").value, mp3: $("mp3").checked, params: paramValues(e), deliver: true } });
+    S.job = job.id; syncControls(); $("progress").hidden = false;
+    const tick = async () => {
+      let j; try { j = await api("/api/jobs/" + job.id); } catch (x) { j = { status: "error", error: x.message, total: 1, done: 0, results: [] }; }
+      $("barFill").style.width = `${Math.round(100 * (j.done || 0) / Math.max(1, j.total))}%`;
+      $("progText").textContent = j.message || "";
+      const box = $("batchBox"); box.hidden = false; box.replaceChildren();
+      for (const r of j.results || []) {
+        const d = r.delivery || {};
+        const line = r.state === "done" ? `${fmt(r.duration)}  ${r.wav}` + (d.status === "copied" ? `  |  copied to ${d.path}` : d.status === "error" ? `  |  not copied: ${d.why}` : "") + (r.note ? `  |  ${r.note}` : "")
+          : r.state === "error" ? r.error : r.state === "working" ? "Working" : "Waiting";
+        box.append(el("div", { class: "b-row" + (r.state === "error" ? " bad" : "") }, el("b", { text: r.episode }), el("span", { text: line })));
+      }
+      if (j.status === "running") return setTimeout(tick, 700);
+      S.job = null; $("progress").hidden = true; syncControls(); refresh().catch(() => {}); loadHistory();
+      showError(j.status === "error" ? j.error : (j.message && !j.message.startsWith("All ") ? j.message : ""));
+    };
+    tick();
+  } catch (x) { showError(x.message); }
+};
 $("previewBtn").onclick = () => generate(true);
 
 function watch(job, preview) {
@@ -260,7 +373,8 @@ function watch(job, preview) {
     if (preview && j.session && j.session.sentences[0] && j.session.sentences[0].url) {
       $("previewBox").hidden = false; const a = $("previewAudio"); a.src = j.session.sentences[0].url; a.play().catch(() => {});
     }
-    if (!preview && j.session) { S.session = j.session; renderSession(); loadFinal(); loadHistory(); }
+    if (!preview && j.session) { S.session = j.session; renderSession(); loadFinal(); loadHistory(); runEstimate();
+      if (j.session.delivery && j.session.delivery.status === "exists") askExists(); }
   };
   tick();
 }
@@ -297,8 +411,10 @@ function renderSession(current) {
     const regen = el("button", { class: "btn small", type: "button", text: "Regenerate",
       onclick: () => regenerate(x.index, input.dataset.dirty ? input.value : null) });
     regen.disabled = !!S.job || s.merged || x.state === "pending" && !x.error;
+    const said = x.subs && x.subs.length ? el("div", { class: "said", text: "Said as: " +
+      [...new Map(x.subs.map((u) => [u.from + ">" + u.to, `${u.from} \u2192 ${u.to}`])).values()].join(", ") }) : null;
     list.append(el("li", { class: x.error ? "err" : x.flag ? "flag" : "" },
-      el("span", { class: "n", text: x.index + 1 }), play, el("div", { class: "txt" }, input, sub), regen));
+      el("span", { class: "n", text: x.index + 1 }), play, el("div", { class: "txt" }, input, said, sub), regen));
   }
   if (focused != null) { const f = list.querySelector(`input[data-si="${focused}"]`); if (f) f.focus(); }
   markPlaying();
@@ -323,7 +439,9 @@ const main = $("mainAudio");
 async function loadFinal() {
   const f = S.session && S.session.final; if (!f) return;
   main.src = f.url;
-  $("saveMp3Btn").hidden = !f.mp3;
+  $("saveMp3Btn").hidden = !f.mp3; $("saveSrtBtn").hidden = !f.srt; $("deliverBtn").hidden = false;
+  $("captionMeta").textContent = f.srt ? `${f.srt}` + (f.srt_words ? `  |  word-by-word captions: ${f.srt_words}` : "") + `  |  ${f.captions || ""}` : (f.captions || "");
+  renderDelivery();
   $("resultMeta").textContent = `${f.wav}  |  48 kHz mono WAV, ${fmt(f.duration)}` +
     (f.lufs != null ? `, ${f.lufs} LUFS` : "") + (f.version > 1 ? `, version ${f.version}` : "") + (f.mp3 ? "  |  MP3 saved next to it" : "");
   try {
@@ -379,6 +497,35 @@ async function saveAs(fmtName) {
     } else { const a = el("a", { href: url, download: name }); document.body.append(a); a.click(); a.remove(); }
   } catch (e) { if (e.name !== "AbortError") showError(e.message); }
 }
+function renderDelivery() {
+  const d = S.session && S.session.delivery, m = $("deliverMeta");
+  m.textContent = !d || d.status === "off" ? "" : d.status === "copied" ? `Copied to the video folder: ${d.path}` + (d.replaced ? " (the old file was replaced)" : "")
+    : d.status === "exists" ? `Not copied yet: ${d.target} is already there. Press Copy to video folder to choose what to do.`
+    : d.status === "skipped" ? "Not copied to the video folder (you chose to leave the existing file alone)." : `Not copied to the video folder: ${d.why}`;
+}
+async function deliver(mode, episode) {
+  try { S.session = await api(`/api/sessions/${S.session.id}/deliver`, { body: { mode, episode } }); renderDelivery();
+    if (S.session.delivery && S.session.delivery.status === "exists") askExists(); }
+  catch (e) { showError(e.message); }
+}
+function askExists() {
+  const d = S.session.delivery, dlg = $("existsDlg");
+  $("existsText").textContent = `${d.target} already exists. Nothing has been replaced. You can keep it and save this take beside it as ${d.suggest}, replace it with this take, or leave the folder as it is.`;
+  $("existsKeep").textContent = `Keep both: save as ${d.suggest}`;
+  $("existsKeep").onclick = () => { dlg.close(); deliver("version"); };
+  $("existsReplace").onclick = () => { dlg.close(); deliver("overwrite"); };
+  $("existsSkip").onclick = () => { dlg.close(); deliver("skip"); };
+  if (!dlg.open) dlg.showModal();
+}
+$("deliverBtn").onclick = () => {
+  if (!S.session) return; showError("");
+  const ep = episodeCode() || S.session.episode;
+  if (!S.chunksDir) return showError("Set the video folder first: Settings, Folders.");
+  if (!ep) return showError("Type the episode code (for example EP22) in the Episode box under the script, then press Copy to video folder again.");
+  deliver("ask", ep);
+};
+$("saveSrtBtn").onclick = () => { const f = S.session && S.session.final; if (!f || !f.srt) return;
+  const a = el("a", { href: `/api/sessions/${S.session.id}/final?fmt=srt`, download: f.name.replace(/\.wav$/, ".srt") }); document.body.append(a); a.click(); a.remove(); };
 $("saveAsBtn").onclick = () => saveAs("wav");
 $("saveMp3Btn").onclick = () => saveAs("mp3");
 $("openFolderBtn").onclick = () => S.session && api(`/api/sessions/${S.session.id}/open`, { method: "POST" }).catch((e) => showError(e.message));
@@ -403,7 +550,53 @@ async function loadHistory() {
 }
 
 /* ---------- settings ---------- */
-$("settingsBtn").onclick = () => $("settingsDlg").showModal();
+function openSettings(tab) { showTab(tab || "general"); renderVoiceToggles(); renderPron(S.pron); $("chunksDir").value = S.chunksDir; $("settingsDlg").showModal(); }
+$("settingsBtn").onclick = () => openSettings();
+function showTab(name) {
+  document.querySelectorAll("#settingsDlg .tab").forEach((t) => t.classList.toggle("sel", t.dataset.tab === name));
+  document.querySelectorAll("#settingsDlg .pane").forEach((p) => { p.hidden = p.dataset.pane !== name; });
+}
+document.querySelectorAll("#settingsDlg .tab").forEach((t) => { t.onclick = () => showTab(t.dataset.tab); });
+function renderVoiceToggles() {
+  const box = $("voiceToggles"); box.replaceChildren();
+  for (const e of S.engines) {
+    if (!e.all_voices || !e.all_voices.length) continue;
+    const list = el("div", { class: "vt-list" });
+    for (const v of e.all_voices) {
+      const cb = el("input", { type: "checkbox", "data-engine": e.id, value: v.id }); cb.checked = !v.hidden; cb.onchange = saveVoices;
+      list.append(el("label", {}, cb, el("span", { text: v.label }), el("small", { text: v.note || "" })));
+    }
+    box.append(el("div", { class: "vt-group" }, el("h3", { text: e.name }), list));
+  }
+}
+async function saveVoices() {
+  const hidden = {};
+  $("voiceToggles").querySelectorAll("input[type=checkbox]").forEach((c) => { if (!c.checked) (hidden[c.dataset.engine] = hidden[c.dataset.engine] || []).push(c.value); });
+  try { await api("/api/settings/voices", { body: { hidden } }); const n = Object.values(hidden).reduce((a, x) => a + x.length, 0);
+    $("voicesMsg").textContent = n ? `Saved. ${n} voice${n === 1 ? " is" : "s are"} hidden.` : "Saved. Every voice is shown."; await refresh(); renderVoiceToggles(); }
+  catch (e) { $("voicesMsg").textContent = e.message; }
+}
+$("voicesAll").onclick = () => { $("voiceToggles").querySelectorAll("input[type=checkbox]").forEach((c) => { c.checked = true; }); saveVoices(); };
+function pronRow(w, t) {
+  const row = el("div", { class: "pron-row" }, el("input", { type: "text", value: w || "", maxlength: 60, "aria-label": "Written as" }),
+    el("input", { type: "text", value: t || "", maxlength: 120, "aria-label": "Say as" }));
+  row.append(el("button", { class: "icon-btn", type: "button", title: "Remove", "aria-label": "Remove", text: "\u00d7", onclick: () => row.remove() }));
+  return row;
+}
+function renderPron(rows) { const box = $("pronRows"); box.replaceChildren(); for (const [w, t] of rows || []) box.append(pronRow(w, t)); }
+$("pronAdd").onclick = () => { const r = pronRow("", ""); $("pronRows").append(r); r.querySelector("input").focus(); };
+$("pronSave").onclick = async () => {
+  const rows = [...$("pronRows").querySelectorAll(".pron-row")].map((r) => [...r.querySelectorAll("input")].map((i) => i.value.trim())).filter((r) => r[0] && r[1]);
+  try { S.pron = (await api("/api/settings/pronunciations", { body: { rows } })).rows; renderPron(S.pron); $("pronMsg").textContent = `Saved ${S.pron.length} word${S.pron.length === 1 ? "" : "s"}. Used from the next generation on.`; runEstimate(); }
+  catch (e) { $("pronMsg").textContent = e.message; }
+};
+$("pronReset").onclick = async () => { if (!confirm("Replace the list with the starting list? Words you added are removed.")) return;
+  try { S.pron = (await api("/api/settings/pronunciations/reset", { method: "POST" })).rows; renderPron(S.pron); $("pronMsg").textContent = "Back to the starting list."; } catch (e) { $("pronMsg").textContent = e.message; } };
+$("chunksSave").onclick = async () => {
+  try { S.chunksDir = (await api("/api/settings/folders", { body: { chunks_dir: $("chunksDir").value } })).chunks_dir;
+    $("chunksMsg").textContent = S.chunksDir ? "Saved. The folder is created the first time a file is copied there." : "Saved. Copying to a video folder is off."; episodeNote(); }
+  catch (e) { $("chunksMsg").textContent = e.message; }
+};
 $("quitBtn").onclick = async () => { if (confirm("Stop Voice Studio?")) { await api("/api/quit", { method: "POST" }).catch(() => {}); document.body.innerHTML = '<p style="padding:40px">Voice Studio has stopped. You can close this tab.</p>'; } };
 const azMsg = (t) => { $("azMsg").textContent = t; };
 $("azSave").onclick = async () => {
@@ -435,7 +628,7 @@ async function checkUpdate(force) {
   } catch (e) { if (force) upMsg(e.message); }
 }
 $("upCheck").onclick = () => checkUpdate(true);
-$("updatePill").onclick = () => $("settingsDlg").showModal();
+$("updatePill").onclick = () => openSettings("general");
 $("upApply").onclick = async () => {
   if (!confirm("Install the update now? The current app files are backed up first, then replaced. You will need to restart Voice Studio.")) return;
   upMsg("Downloading and installing");
@@ -655,7 +848,22 @@ async function pollPacks() {
   else if (st.done) refresh().catch(() => {});
   return st;
 }
-function openEngines() { packMsg(""); $("enginesDlg").showModal(); pollPacks(); }
+async function loadLeftovers() {
+  const box = $("leftBox"); let r;
+  try { r = await api("/api/cleanup"); } catch (e) { box.hidden = true; return; }
+  box.replaceChildren(); box.hidden = !r.items.length;
+  if (!r.items.length) return;
+  const btn = el("button", { class: "btn small", type: "button", text: `Delete these files (${r.total_mb} MB)`, onclick: async () => {
+    if (!confirm(`Delete the Pocket TTS leftovers (${r.total_mb} MB)? They are deleted for good, not moved to the Recycle Bin. Kokoro and the other engines are not touched.`)) return;
+    btn.disabled = true; btn.textContent = "Deleting";
+    try { const out = await api("/api/cleanup", { method: "POST" });
+      packMsg(out.failed.length ? "Some files could not be deleted: " + out.failed.join("; ") : "The Pocket TTS leftovers are deleted."); }
+    catch (e) { packMsg(e.message); }
+    loadLeftovers(); refresh().catch(() => {}); } });
+  box.append(el("div", { class: "item note" }, el("b", { text: "Pocket TTS is no longer part of Voice Studio" }),
+    el("q", { text: "It left these on this PC: " + r.items.map((i) => `${i.what} (${i.mb} MB)`).join("; ") + "." }), btn));
+}
+function openEngines() { packMsg(""); $("enginesDlg").showModal(); pollPacks(); loadLeftovers(); }
 $("enginesBtn").onclick = openEngines;
 $("engClose").onclick = () => $("enginesDlg").close();
 $("packInstall").onclick = async () => {
@@ -681,21 +889,35 @@ async function refresh() {
   $("upAuto").checked = st.update.auto_check;
   $("about").textContent = `Voice Studio ${st.version}. Runs on this PC at 127.0.0.1 only. Output folder: ${st.out_root}. ` +
     "No analytics or telemetry. The only network calls are Azure requests you start and the update check above. Voice profiles stay on this PC.";
+  $("places").textContent = `This window is running the copy in ${st.root}` + (st.is_installed_copy ? " (the installed app)." : ".") +
+    ` Voice profiles, history, presets and settings are kept in ${st.data}` +
+    (st.data_shared ? ". That is the installed app's data folder: this copy shares it, so everything stays in one place." : ".") +
+    (st.installed && !st.is_installed_copy ? ` The installed app is in ${st.installed}; updates from GitHub go there when you update from inside the installed app.` : "");
+  S.pron = st.pronunciations; S.chunksDir = st.chunks_dir; S.presets = st.presets;
+  if (!S.presetInit) { S.presetInit = true; S.preset = st.last_preset || ""; }
+  renderPresets(); episodeNote();
   S.prof = st.profiles;
   renderEngines(); renderVoices(); renderParams(); syncControls(); renderCompare();
   return st;
 }
 (async function init() {
   setTheme(store.get("vs-theme") || "dark");
+  $("target").value = store.get("vs-target") || "";
   try {
-    await refresh(); await loadHistory();
+    await refresh();
+    if (S.preset) applyPreset(S.preset, true);
     const e = currentEngine();
     if (e && e.kind === "local" && e.status.state === "idle") activate(e.id);
+  } catch (e) { showError(S.reach ? e.message : UNREACHABLE); }
+  loadHistory().catch(() => {});
+  try {                                    // an older server has no Engines screen: that is not "cannot reach"
     const setup = await api("/api/setup");
     if (setup.running) openEngines();
     else if (!setup.packs.some((p) => p.installed) && !store.get("vs-engines-seen")) { store.set("vs-engines-seen", "1"); openEngines(); }
-  } catch (e) { showError("Cannot reach the Voice Studio server. Is it still running?"); }
+  } catch (e) { /* nothing to show */ }
+  let quiet = 0;
   setInterval(() => { const c = currentEngine();
-    if (!S.job && (S.engines.some((e) => e.status.state === "loading") || (c && c.kind === "local" && c.status.state === "idle"))) refresh().catch(() => {}); }, 2000);
+    const loading = !S.job && (S.engines.some((e) => e.status.state === "loading") || (c && c.kind === "local" && c.status.state === "idle"));
+    if (loading || !S.reach || ++quiet >= 15) { quiet = 0; refresh().catch(() => {}); } }, 2000);
   checkUpdate(false);
 })();

@@ -74,6 +74,10 @@ class Azure(Engine):
 
     def __init__(self):
         self._lock = threading.Lock()
+        self.last_words = None      # word timings of the last request, one list per item (for captions)
+
+    def rate_fixed(self, voice):
+        return bool(VOICES.get(voice, {}).get("plain"))
 
     def status(self):
         key, region = creds()
@@ -94,10 +98,27 @@ class Azure(Engine):
         ssml = build_ssml(items, VOICES[voice], rate, pause_ms)
         cfg = sdk.SpeechConfig(subscription=key, region=region)
         cfg.set_speech_synthesis_output_format(sdk.SpeechSynthesisOutputFormat.Raw48Khz16BitMonoPcm)
-        marks = {}
+        marks, heard = {}, []
+        self.last_words = None
+
+        def on_word(e):                 # timings only; a problem here must never affect the audio
+            try:
+                kind = str(getattr(e, "boundary_type", "")).lower()
+                if "punctuation" in kind or "sentence" in kind:
+                    return
+                dur = getattr(e, "duration", 0)
+                dur = dur.total_seconds() if hasattr(dur, "total_seconds") else float(dur or 0) / 10_000_000
+                start = e.audio_offset / 10_000_000
+                heard.append([start, start + max(0.0, dur), str(e.text)])
+            except Exception:
+                pass
         with self._lock:
             synth = sdk.SpeechSynthesizer(speech_config=cfg, audio_config=None)
             synth.bookmark_reached.connect(lambda e: marks.__setitem__(e.text, e.audio_offset))
+            try:
+                synth.synthesis_word_boundary.connect(on_word)
+            except Exception:
+                pass
             r = synth.speak_ssml_async(ssml).get()          # exactly one request
         if r.reason != sdk.ResultReason.SynthesizingAudioCompleted:
             d = r.cancellation_details
@@ -106,13 +127,22 @@ class Azure(Engine):
         # bookmark offsets are in 100-nanosecond ticks
         cuts = [int(marks.get(f"s{i}", -1) * SR / 10_000_000) if f"s{i}" in marks else -1
                 for i in range(len(items))]
+        heard.sort(key=lambda w: w[0])
         if len(items) == 1 or any(c < 0 for c in cuts) or cuts != sorted(cuts):
+            self.last_words = [heard] + [[] for _ in items[1:]] if heard else None
             if len(items) == 1:
                 return [audio], SR
             # could not split: hand the whole take to the first sentence
             return [audio] + [np.zeros(0, dtype=np.float32)] * (len(items) - 1), SR
         cuts[0] = 0
         cuts.append(audio.size)
+        if heard:                       # share the words out between the sentence clips, timed from each clip's start
+            per = [[] for _ in items]
+            for w in heard:
+                k = max(i for i in range(len(items)) if cuts[i] / SR <= w[0] + 0.02)
+                t0 = cuts[k] / SR
+                per[k].append([max(0.0, w[0] - t0), max(0.0, w[1] - t0), w[2]])
+            self.last_words = per
         return [audio[cuts[i]:cuts[i + 1]] for i in range(len(items))], SR
 
     def test(self, key=None, region=None):

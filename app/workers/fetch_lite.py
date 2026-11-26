@@ -1,5 +1,5 @@
-"""Setup only: download the Kokoro and Pocket TTS model files into models\\hf_cache
-by loading each model and each offered voice once."""
+"""Setup only: download the Kokoro model files into models\\hf_cache by loading
+the model and each offered voice once."""
 import os
 import sys
 import traceback
@@ -43,17 +43,9 @@ def kokoro():
     list(k._pipe("a")("Ready.", voice="af_heart"))
 
 
-def pocket():
-    import pocket_worker as p
-    p.load({})
-    for v in p.VOICES:
-        p.S["model"].get_state_for_audio_prompt(v)
-
-
 step("Kokoro model and voices (about 330 MB)", kokoro, "kokoro.ok")
-step("Pocket TTS model and voices (about 250 MB)", pocket, "pocket.ok")
 if failed:
     print("Not finished: " + "; ".join(failed))
     sys.exit(1)
-print("Kokoro and Pocket TTS model files are in place.")
+print("Kokoro model files are in place.")
 sys.exit(0)

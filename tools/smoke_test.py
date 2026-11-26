@@ -1,5 +1,5 @@
 """End-to-end check used by the build workflow (and usable by hand):
-  runtime\\Scripts\\python.exe tools\\smoke_test.py [--install lite,openvoice] kokoro pocket
+  runtime\\Scripts\\python.exe tools\\smoke_test.py [--install lite,openvoice] kokoro
 Starts Voice Studio, generates a short script with each named engine and checks
 the exported file. Exits with 1 if anything fails. Standard library only."""
 import json
@@ -16,7 +16,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 PORT = 8791
 BASE = f"http://127.0.0.1:{PORT}"
-VOICE = {"kokoro": "bm_george", "pocket": "alba", "chatterbox": "builtin", "openvoice": "base"}
+VOICE = {"kokoro": "bm_george", "chatterbox": "builtin", "openvoice": "base"}
 TEXT = "Your email filter checked every link. [pause] But this link was a picture."
 opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
@@ -32,6 +32,50 @@ def call(path, body=None):
         return e.code, json.loads(e.read() or b"null")
 
 
+def extras_check(out):
+    """Preset + command line + captions + video-folder copy + memory report."""
+    bad = []
+
+    def check(ok, what):
+        print(f"{'OK  ' if ok else 'FAIL'} {what}", flush=True)
+        if not ok:
+            bad.append(what.split(":")[0])
+    chunks = out / "chunks"
+    check(call("/api/settings/folders", {"chunks_dir": str(chunks)})[0] == 200, "video folder saved")
+    check(call("/api/presets", {"name": "Smoke \u2013 George", "engine": "kokoro", "voice": "bm_george",
+                                "rate": 1.0, "mp3": True, "target": "4-9"})[0] == 200, "preset saved")
+    script = out / "smoke.md"
+    script.write_text("## EP98 | Other\n> Not this one.\n\n## EP99 | Smoke\n> Geeki turned on MFA. [pause] Then Intune asked again.\n",
+                      encoding="utf-8")
+    env = dict(os.environ, VOICESTUDIO_PORT=str(PORT))
+    if os.name == "nt":
+        cmd = ["cmd", "/c", str(ROOT / "voicestudio-cli.bat")]
+    else:
+        cmd = [sys.executable, str(ROOT / "tools" / "voicestudio_cli.py")]
+    args = ["generate", "--preset", "smoke - george", "--in", str(script), "--episode", "EP99", "--quiet"]
+    for n, want in ((1, "EP99_audio.wav"), (2, "EP99_audio_v2.wav")):
+        r = subprocess.run(cmd + args, capture_output=True, text=True, env=env, timeout=900)
+        try:
+            j = json.loads(r.stdout)
+        except Exception:
+            j = {"ok": False, "error": (r.stdout + r.stderr)[-400:]}
+        ok = (j.get("ok") and os.path.exists(j["wav"]) and os.path.exists(j["srt"]) and j.get("mp3")
+              and os.path.basename(j.get("copied_to") or "") == want and os.path.exists(j["copied_to"]))
+        check(bool(ok), f"command line run {n}: {j.get('duration')}s, estimate {j.get('estimated')}s, copy {j.get('copied_to')}"
+                        + ("" if ok else f" {j}"))
+        if ok and n == 1:
+            srt = open(j["srt"], encoding="utf-8").read()
+            check(srt.count("-->") == 2 and "MFA" in srt, "captions: 2 sentences, written form kept")
+    code, m = call("/api/memory")
+    apps = ", ".join(f"{a['name']} {a['gb']}" for a in m.get("apps", []))
+    check(code == 200 and (os.name != "nt" or (m["apps"] and m["free_commit_gb"] is not None)),
+          f"memory report: {m.get('free_commit_gb')} GB free; biggest: {apps}")
+    code, st = call("/api/state")
+    check(not any(e["id"] == "pocket" for e in st["engines"]) and not call("/api/cleanup")[1]["items"],
+          "no Pocket TTS engine and nothing left behind on a new install")
+    return bad
+
+
 def main():
     args = sys.argv[1:]
     install = []
@@ -39,7 +83,7 @@ def main():
         i = args.index("--install")
         install = [x for x in args[i + 1].split(",") if x]
         del args[i:i + 2]
-    engines = args or ["kokoro", "pocket"]
+    engines = args or ["kokoro"]
     out = Path(tempfile.mkdtemp(prefix="vs_smoke_"))
     env = dict(os.environ, VOICESTUDIO_NO_BROWSER="1", VOICESTUDIO_OUT=str(out), VOICESTUDIO_PORT=str(PORT))
     srv = subprocess.Popen([sys.executable, "-m", "app.server"], cwd=str(ROOT), env=env)
@@ -103,6 +147,8 @@ def main():
             else:
                 print(f"FAIL {eng}: {j.get('error') or j.get('message')}", flush=True)
                 failed.append(eng)
+        if "kokoro" in engines and "kokoro" not in failed:
+            failed += extras_check(out)
     finally:
         try:
             call("/api/quit", {})

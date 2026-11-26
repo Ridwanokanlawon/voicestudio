@@ -45,6 +45,10 @@ class Engine:
         -> (list of mono float32 arrays, one per item, sample_rate)"""
         raise NotImplementedError
 
+    def rate_fixed(self, voice: str) -> bool:
+        """True for a voice that ignores the speaking rate."""
+        return False
+
     def voice_list(self) -> list:
         if not self.uses_profiles:
             return list(self.voices)
@@ -53,8 +57,12 @@ class Engine:
         return mine + list(self.extra_voices)
 
     def describe(self) -> dict:
+        from .. import extras
+        off = set(extras.hidden().get(self.id, []))
+        every = [dict(v, fixed_rate=self.rate_fixed(v["id"]), hidden=v["id"] in off) for v in self.voice_list()]
         return {"id": self.id, "name": self.name, "kind": self.kind, "badge": self.badge,
-                "voices": self.voice_list(), "uses_profiles": self.uses_profiles, "params": self.params,
+                "voices": [v for v in every if not v["hidden"]], "all_voices": every,
+                "uses_profiles": self.uses_profiles, "params": self.params,
                 "rate_note": self.rate_note, "status": self.status()}
 
 

@@ -18,46 +18,7 @@ log = logging.getLogger("voicestudio")
 TMP = DATA / "tmp"
 
 
-def memory_free():
-    """(free RAM GB, free commit GB) on Windows, else (None, None)."""
-    try:
-        if os.name == "nt":
-            import ctypes
-
-            class MS(ctypes.Structure):
-                _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong)] + [
-                    (n, ctypes.c_ulonglong) for n in ("ullTotalPhys", "ullAvailPhys", "ullTotalPageFile",
-                                                      "ullAvailPageFile", "ullTotalVirtual", "ullAvailVirtual",
-                                                      "ullAvailExtendedVirtual")]
-            m = MS()
-            m.dwLength = ctypes.sizeof(MS)
-            ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(m))
-            return m.ullAvailPhys / 2 ** 30, m.ullAvailPageFile / 2 ** 30
-    except Exception:
-        pass
-    return None, None
-
-
-def memory_note():
-    """Free memory on this PC, to tell an out-of-memory stop from a real crash."""
-    try:
-        if os.name == "nt":
-            import ctypes
-
-            class MS(ctypes.Structure):
-                _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong)] + [
-                    (n, ctypes.c_ulonglong) for n in ("ullTotalPhys", "ullAvailPhys", "ullTotalPageFile",
-                                                      "ullAvailPageFile", "ullTotalVirtual", "ullAvailVirtual",
-                                                      "ullAvailExtendedVirtual")]
-            m = MS()
-            m.dwLength = ctypes.sizeof(MS)
-            ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(m))
-            g = 2 ** 30
-            return (f"Memory: {m.ullAvailPhys / g:.1f} GB of {m.ullTotalPhys / g:.1f} GB RAM free, "
-                    f"{m.ullAvailPageFile / g:.1f} GB of {m.ullTotalPageFile / g:.1f} GB commit free.")
-    except Exception:
-        pass
-    return ""
+from ..sysinfo import free_up_hint, memory_free, memory_note  # noqa: E402,F401
 
 
 class WorkerEngine(Engine):
@@ -164,9 +125,8 @@ class WorkerEngine(Engine):
         if commit is not None and commit < self.min_free_gb:
             # loading now would crash this engine, and possibly the app with it
             self._state = "error"
-            self._detail = (f"This PC is almost out of memory: {commit:.1f} GB free, and {self.name} needs about "
-                            f"{self.min_free_gb:.0f} GB. Close other heavy apps (check Task Manager, Memory column) "
-                            f"or restart the PC, then select the engine again.")
+            self._detail = (f"Not enough free memory to load {self.name}: {commit:.1f} GB free, about "
+                            f"{self.min_free_gb:.0f} GB needed. {free_up_hint()} Then select the engine again.")
             log.warning("%s not loaded: %s", self.id, memory_note())
             return
         self._state, self._detail = "loading", "Loading engine..."

@@ -108,27 +108,27 @@ if (-not (Works $py $mainImports)) {
 }
 
 # ---- 2. Which voice engines -------------------------------------------------
-$ltDone = (Works (PyOf (Join-Path $root "envs\lite")) "kokoro, pocket_tts, en_core_web_sm") -and (Test-Path (Join-Path $models "lite\kokoro.ok")) -and (Test-Path (Join-Path $models "lite\pocket.ok"))
+$ltDone = (Works (PyOf (Join-Path $root "envs\lite")) "kokoro, en_core_web_sm") -and (Test-Path (Join-Path $models "lite\kokoro.ok"))
 $cbDone = (Works (PyOf (Join-Path $root "envs\chatterbox")) "chatterbox.tts, perth") -and (Test-Path (Join-Path $models "chatterbox\t3_cfg.safetensors"))
 $ovDone = (Works (PyOf (Join-Path $root "envs\openvoice")) "melo, openvoice") -and (Test-Path (Join-Path $models "melo\EN\checkpoint.pth")) -and (Test-Path (Join-Path $models "openvoice\converter\checkpoint.pth")) -and (Test-Path (Join-Path $models "hf_cache\hub\models--M4869--WavMark")) -and (Test-Path (Join-Path $models "nltk_data\corpora\cmudict"))
 $want = @()
 if ($Engines) { $want = $Engines | ForEach-Object { $_.ToLower().Split(",") } | ForEach-Object { $_.Trim() } }
 else {
   Say "Voice engines (each runs on this PC in its own environment)"
-  if ($ltDone) { Write-Host "Kokoro and Pocket TTS: already installed" }
-  elseif (Ask "Install the light engines, Kokoro and Pocket TTS (preset voices, run on any PC; about 2 GB)?") { $want += "lite" }
+  if ($ltDone) { Write-Host "Kokoro: already installed" }
+  elseif (Ask "Install the light engine, Kokoro (preset voices, runs on any PC; about 1.5 GB)?") { $want += "lite" }
   if ($cbDone) { Write-Host "Chatterbox: already installed" }
   elseif (Ask "Install Chatterbox (voice cloning; needs an NVIDIA GPU to be fast; about 8 GB)?") { $want += "chatterbox" }
   if ($ovDone) { Write-Host "OpenVoice v2: already installed" }
   elseif (Ask "Install OpenVoice v2 with MeloTTS accents (your tone with a chosen accent; about 6 GB)?") { $want += "openvoice" }
 }
 
-# ---- 2b. Light engines: Kokoro and Pocket TTS (CPU) -------------------------
+# ---- 2b. Light engine: Kokoro (CPU) -------------------------
 if (($want -contains "lite") -and (-not $ltDone)) {
-  Say "Light engines environment (envs\lite)"
+  Say "Light engine environment (envs\lite)"
   $e = Join-Path $root "envs\lite"; $p = PyOf $e
   New-Venv $e
-  if (-not (Works $p "torch, kokoro, pocket_tts, en_core_web_sm")) {
+  if (-not (Works $p "torch, kokoro, en_core_web_sm")) {
     if (-not (Works $p "torch")) {
       & $p -m pip install --disable-pip-version-check torch==2.6.0 --index-url https://download.pytorch.org/whl/cpu
       if ($LASTEXITCODE -ne 0) { Stop-Setup "PyTorch did not install. Check the internet connection and run Setup.bat again." }
@@ -136,11 +136,11 @@ if (($want -contains "lite") -and (-not $ltDone)) {
     & $p -m pip install --disable-pip-version-check -r (Join-Path $root "requirements-lite.txt")
     if ($LASTEXITCODE -ne 0) { Stop-Setup "The light engine packages did not install. Run Setup.bat again." }
     & $p -m pip install --disable-pip-version-check --no-deps $SPACY_EN
-    if (-not (Works $p "kokoro, pocket_tts, en_core_web_sm")) { Stop-Setup "Kokoro or Pocket TTS did not install correctly. See the log." }
+    if (-not (Works $p "kokoro, en_core_web_sm")) { Stop-Setup "Kokoro did not install correctly. See the log." }
   } else { Write-Host "Packages already installed." }
-  Say "Kokoro and Pocket TTS model files (about 0.6 GB, one time)"
+  Say "Kokoro model files (about 0.35 GB, one time)"
   & $p (Join-Path $root "app\workers\fetch_lite.py") 2>&1 | Tee-Object -FilePath "$logDir\fetch_lite.txt"
-  if ($LASTEXITCODE -ne 0) { Stop-Setup "The light engine model files did not all download. The reason is in models\fetch_lite.log. Run Setup.bat again to resume." }
+  if ($LASTEXITCODE -ne 0) { Stop-Setup "The Kokoro model files did not all download. The reason is in models\fetch_lite.log. Run Setup.bat again to resume." }
 }
 
 # ---- 3. Chatterbox ----------------------------------------------------------
@@ -193,7 +193,7 @@ if (-not $NoShortcut) {
 
 # ---- 6. Summary -------------------------------------------------------------
 Say "Installed"
-if (Test-Path (PyOf (Join-Path $root "envs\lite"))) { Write-Host "  lite (Kokoro, Pocket TTS) : installed, runs on the CPU" } else { Write-Host "  lite (Kokoro, Pocket TTS) : not installed (run Setup.bat again to add it)" }
+if (Test-Path (PyOf (Join-Path $root "envs\lite"))) { Write-Host "  lite (Kokoro) : installed, runs on the CPU" } else { Write-Host "  lite (Kokoro) : not installed (run Setup.bat again to add it)" }
 foreach ($n in @("chatterbox", "openvoice")) {
   $p = PyOf (Join-Path $root "envs\$n")
   if (Test-Path $p) {

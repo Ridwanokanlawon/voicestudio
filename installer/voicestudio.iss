@@ -44,6 +44,8 @@ Source: "..\Setup.bat"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\setup.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\Make Share Zip.bat"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\make_share_zip.ps1"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\voicestudio-cli.bat"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\tools\voicestudio_cli.py"; DestDir: "{app}\tools"; Flags: ignoreversion
 Source: "..\requirements.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\requirements-lite.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\requirements-chatterbox.txt"; DestDir: "{app}"; Flags: ignoreversion

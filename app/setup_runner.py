@@ -10,8 +10,8 @@ from . import engines
 from .paths import MODELS, ROOT, log_dir
 
 PACKS = [
-    {"id": "lite", "name": "Kokoro and Pocket TTS", "size": "about 2 GB", "engines": ["kokoro", "pocket"],
-     "detail": "Preset voices. Light and quick: runs on any PC, no graphics card needed."},
+    {"id": "lite", "name": "Kokoro", "size": "about 1.5 GB", "engines": ["kokoro"],
+     "detail": "13 preset American and British voices. Light and quick: runs on any PC, no graphics card needed."},
     {"id": "openvoice", "name": "OpenVoice v2", "size": "about 6 GB", "engines": ["openvoice"],
      "detail": "Your own voice tone with a choice of English accent."},
     {"id": "chatterbox", "name": "Chatterbox", "size": "about 8 GB", "engines": ["chatterbox"],
@@ -56,7 +56,7 @@ def _command(packs):
                 "-Yes", "-NoShortcut", "-Engines", ",".join(packs)]
     if os.environ.get("VOICESTUDIO_TEST") == "1":        # stand-in used when testing the screen off Windows
         import sys
-        code = ("import time\nfor s in ['Light engines environment (envs/lite)', 'Kokoro and Pocket TTS model files']:\n"
+        code = ("import time\nfor s in ['Light engines environment (envs/lite)', 'Kokoro model files']:\n"
                 "    print('== ' + s, flush=True)\n    for i in range(4):\n        print(f'Downloading part {i + 1} of 4', flush=True); time.sleep(0.7)\n"
                 "print('Setup finished.', flush=True)")
         return [sys.executable, "-c", code]

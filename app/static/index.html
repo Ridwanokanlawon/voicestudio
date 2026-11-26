@@ -38,11 +38,23 @@
       </div>
       <textarea id="script" spellcheck="true" placeholder="Paste your script here (Ctrl+V), drop a file on this box, or open a .txt, .md or .docx file.&#10;&#10;Write [pause] where you want a pause."></textarea>
       <div class="meta" id="scriptMeta">0 words</div>
+      <div class="pair">
+        <div class="field2"><label for="episode">Episode</label><input id="episode" type="text" maxlength="30" placeholder="for example EP22" autocomplete="off"></div>
+        <div class="field2"><label for="target">Target length, seconds</label><input id="target" type="text" maxlength="12" placeholder="for example 45 or 40-50" autocomplete="off"></div>
+      </div>
+      <p class="hint" id="episodeNote"></p>
+      <div id="estimate" class="estimate" hidden><span id="estText"></span><button id="estApply" class="btn small" type="button" hidden></button></div>
       <div id="safe" class="safe" hidden></div>
     </div>
 
     <div class="card" id="voiceCard">
-      <div class="card-head"><h2>Voice</h2></div>
+      <div class="card-head"><h2>Voice</h2>
+        <div class="row">
+          <select id="presetSel" aria-label="Preset"><option value="">No preset</option></select>
+          <button id="presetSave" class="btn small" type="button">Save preset</button>
+          <button id="presetDel" class="btn small ghost" type="button" hidden>Delete</button>
+        </div>
+      </div>
       <div class="label">Engine</div>
       <div id="engines" class="engines"></div>
       <div class="label">Voice</div>
@@ -66,10 +78,12 @@
         <button id="previewBtn" class="btn">Preview first sentence</button>
         <button id="genBtn" class="btn primary">Generate</button>
       </div>
+      <button id="allBtn" class="btn wide-btn" type="button" hidden>Generate all episodes</button>
       <p class="hint" id="cloudNote" hidden></p>
       <div id="progress" class="progress" hidden><div class="bar"><i id="barFill"></i></div><span id="progText"></span></div>
       <div id="previewBox" class="preview" hidden><span>Preview</span><audio id="previewAudio" controls></audio></div>
       <p id="formError" class="error" hidden></p>
+      <div id="batchBox" class="batch" hidden></div>
     </div>
   </section>
 
@@ -88,6 +102,8 @@
       <div class="row">
         <button id="saveAsBtn" class="btn">Save as</button>
         <button id="saveMp3Btn" class="btn" hidden>Save MP3 as</button>
+        <button id="saveSrtBtn" class="btn" hidden>Save captions as</button>
+        <button id="deliverBtn" class="btn" hidden>Copy to video folder</button>
         <button id="openFolderBtn" class="btn ghost">Open folder</button>
       </div>
     </div>
@@ -100,6 +116,8 @@
     </div>
     <audio id="mainAudio" preload="auto"></audio>
     <div class="meta" id="resultMeta"></div>
+    <div class="meta" id="captionMeta"></div>
+    <div class="meta" id="deliverMeta"></div>
 
     <h3>Sentences</h3>
     <p class="hint" id="sentHint">Play each sentence. If one sounds wrong, fix the text if needed and press Regenerate. Only that sentence is redone, then the full file is rebuilt as a new version.</p>
@@ -112,10 +130,17 @@
   </section>
 </main>
 
-<dialog id="settingsDlg">
+<dialog id="settingsDlg" class="wide">
   <form method="dialog" class="dlg">
     <div class="card-head"><h2>Settings</h2><button class="btn ghost" value="close">Close</button></div>
+    <div class="tabs" role="tablist">
+      <button type="button" class="tab sel" data-tab="general" role="tab">General</button>
+      <button type="button" class="tab" data-tab="voices" role="tab">Voices</button>
+      <button type="button" class="tab" data-tab="pron" role="tab">Pronunciations</button>
+      <button type="button" class="tab" data-tab="folders" role="tab">Folders</button>
+    </div>
 
+    <div class="pane" data-pane="general">
     <h3>Azure AI Speech <span class="badge cloud">Cloud</span></h3>
     <p class="hint">Stored in Windows Credential Manager on this PC only. The key is never written to a file and never leaves this PC except to Azure.</p>
     <div class="field"><label for="azKey">Key</label><input id="azKey" type="password" autocomplete="off" placeholder="Paste Key 1"></div>
@@ -140,6 +165,36 @@
 
     <h3>About</h3>
     <p class="hint" id="about"></p>
+    </div>
+
+    <div class="pane" data-pane="voices" hidden>
+      <p class="hint">Untick a voice to hide it. A hidden voice is not offered anywhere and cannot be used, by the app or by the command line, until you tick it again. This choice is kept on this PC and is not part of a share zip.</p>
+      <div id="voiceToggles"></div>
+      <div class="row end"><button type="button" id="voicesAll" class="btn">Show every voice</button></div>
+      <p id="voicesMsg" class="hint"></p>
+    </div>
+
+    <div class="pane" data-pane="pron" hidden>
+      <p class="hint">Words that are written one way and should be said another. The change is made for every engine just before speaking; your script and the captions keep the written form. Short forms in capitals (MFA) match only as written; other words match in any letter case.</p>
+      <div class="pron-head"><span>Written as</span><span>Say as</span><span></span></div>
+      <div id="pronRows"></div>
+      <div class="row">
+        <button type="button" id="pronAdd" class="btn">Add a word</button>
+        <button type="button" id="pronSave" class="btn primary">Save</button>
+        <button type="button" id="pronReset" class="btn ghost">Back to the starting list</button>
+      </div>
+      <p id="pronMsg" class="hint"></p>
+    </div>
+
+    <div class="pane" data-pane="folders" hidden>
+      <h3>Video folder</h3>
+      <p class="hint">When the Episode box is filled in, the finished WAV is also copied here as EPxx_audio.wav. A file that is already there is never replaced without asking. Leave empty to switch this off.</p>
+      <div class="field"><label for="chunksDir">Folder</label><input id="chunksDir" type="text" autocomplete="off" placeholder="C:\Users\you\Videos\Renders\_chunks"></div>
+      <div class="row"><button type="button" id="chunksSave" class="btn primary">Save</button></div>
+      <p id="chunksMsg" class="hint"></p>
+      <h3>Where this app keeps things</h3>
+      <p class="hint" id="places"></p>
+    </div>
   </form>
 </dialog>
 
@@ -176,6 +231,7 @@
     <div class="card-head"><h2>Engines</h2><button id="engClose" class="btn ghost" type="button">Close</button></div>
     <p class="hint">Local voice engines run on this PC. Each one is downloaded once from its publisher and then works without the internet. Azure needs no download: add your key in Settings.</p>
     <div id="packList" class="packs"></div>
+    <div id="leftBox" class="safe" hidden></div>
     <div class="row end"><button id="packInstall" class="btn primary" type="button">Download and install</button></div>
     <div id="packProgress" class="pack-progress" hidden>
       <div class="bar"><i id="packBar" class="indet"></i></div>
@@ -184,6 +240,18 @@
       <div id="packMeta" class="hint"></div>
     </div>
     <p id="packMsg" class="hint"></p>
+  </div>
+</dialog>
+
+<dialog id="existsDlg">
+  <div class="dlg">
+    <div class="card-head"><h2>That file is already in the video folder</h2></div>
+    <p id="existsText" class="hint"></p>
+    <div class="row end">
+      <button id="existsSkip" class="btn ghost" type="button">Do not copy</button>
+      <button id="existsReplace" class="btn" type="button">Replace it</button>
+      <button id="existsKeep" class="btn primary" type="button"></button>
+    </div>
   </div>
 </dialog>
 

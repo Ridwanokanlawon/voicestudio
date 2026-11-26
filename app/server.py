@@ -29,9 +29,9 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import audio, engines, profiles, safecheck, settings, setup_runner, textproc, updater
+from . import audio, captions, engines, extras, profiles, pron, safecheck, settings, setup_runner, sysinfo, textproc, updater
 from .engines.base import EngineError
-from .paths import ASSETS, DATA, SESSIONS, STATIC, log_dir, new_out_dir, out_root, version
+from .paths import ASSETS, DATA, DATA_SHARED, ROOT, SESSIONS, STATIC, installed_copy, log_dir, new_out_dir, out_root, version
 
 HOST = "127.0.0.1"
 PORT = int(os.environ.get("VOICESTUDIO_PORT", "8765"))
@@ -114,10 +114,11 @@ def public(s):
     for i, it in enumerate(sents(s)):
         out.append({"index": i, "text": it["text"], "state": it.get("state", "pending"),
                     "dur": it.get("dur"), "flag": it.get("flag"), "error": it.get("error"),
+                    "subs": it.get("subs") or [],
                     "url": f"/api/audio/{s['id']}/{it['file']}" if it.get("file") else None})
     return {"id": s["id"], "engine": s["engine"], "engine_kind": s["engine_kind"], "voice": s["voice"],
             "voice_label": s.get("voice_label", s["voice"]), "label": s["label"], "preview": s["preview"], "sentences": out, "final": s.get("final"),
-            "merged": s.get("merged", False)}
+            "merged": s.get("merged", False), "episode": s.get("episode", ""), "delivery": s.get("delivery")}
 
 
 def read_history():
@@ -171,21 +172,29 @@ def store_sentence(s, it, index, a, sr, eng):
 
 
 def assemble(s, eng):
-    """Join all sentences into one file and export it."""
+    """Join all sentences into one file and export it (WAV, optional MP3, captions)."""
     parts, prev = [], False
     sr = None
+    pos = 0                          # samples so far, to time the captions
+    groups = []                      # one per audio clip: {"t0", "t1", "items": [sentences inside it], "audio"}
     for it in s["items"]:
         if it["type"] == "pause":
             if not eng.self_timed and sr:
                 parts.append(audio.silence(s["pause_ms"], sr))
+                pos += parts[-1].size
             prev = False
             continue
         if not it.get("file"):
+            if it.get("state") == "merged" and groups:
+                groups[-1]["items"].append(it)
             continue
         a, sr = audio.read_wav(sdir(s["id"]) / it["file"])
         if prev and not eng.self_timed:
             parts.append(audio.silence(s["gap_ms"], sr))
+            pos += parts[-1].size
+        groups.append({"t0": pos / sr, "t1": (pos + a.size) / sr, "items": [it], "audio": a, "sr": sr})
         parts.append(a)
+        pos += a.size
         prev = True
     if not parts:
         raise EngineError("There is no audio to join.")
@@ -205,16 +214,67 @@ def assemble(s, eng):
     if s.get("mp3") and audio.mp3_available():
         mp3 = out / f"{stem}.mp3"
         audio.write_mp3(mp3, full, audio.TARGET_SR)
+    duration = full.size / audio.TARGET_SR
+    srt, srt_words, cap_note = write_captions(groups, out, stem, duration)
     s["final"] = {"wav": str(wav), "mp3": str(mp3) if mp3 else None, "name": wav.name,
-                  "duration": round(full.size / audio.TARGET_SR, 2), "version": s["version"],
+                  "srt": srt, "srt_words": srt_words, "captions": cap_note,
+                  "duration": round(duration, 2), "version": s["version"],
                   "lufs": None if info["after_lufs"] is None else round(info["after_lufs"], 1),
                   "limited": info["limited"], "out_dir": s["out_dir"],
                   "url": f"/api/sessions/{s['id']}/final?fmt=wav&v={s['version']}"}
+    try:                             # remember this voice's real speed for the length estimate
+        all_s = sents(s)
+        chars = sum(len(it.get("spoken") or it["text"]) for it in all_s)
+        n_pause = sum(1 for it in s["items"] if it["type"] == "pause")
+        speech = (duration - n_pause * s["pause_ms"] / 1000.0) if eng.self_timed else sum(g["t1"] - g["t0"] for g in groups)
+        if not any(it.get("state") == "error" for it in all_s):
+            extras.learn(eng.id, s["voice"], chars, speech, 1.0 if eng.rate_fixed(s["voice"]) else s["rate"])
+    except Exception:
+        log.info("Could not record the speaking speed", exc_info=True)
     write_history({"id": s["id"], "date": datetime.datetime.now().isoformat(timespec="seconds"),
                    "excerpt": s["text"][:110], "label": s["label"], "engine": eng.name,
                    "engine_kind": eng.kind, "voice": s.get("voice_label", s["voice"]), "wav": str(wav),
                    "mp3": str(mp3) if mp3 else None, "out_dir": s["out_dir"],
                    "duration": s["final"]["duration"], "sentences": len(sents(s))})
+
+
+def write_captions(groups, out, stem, duration):
+    """-> (sentence .srt path, word .srt path or None, one line on how exact the timings are).
+    A problem here never stops the audio export."""
+    try:
+        cues, word_cues, exact = [], [], True
+        for g in groups:
+            its = g["items"]
+            words = [w for w in (its[0].get("words") or []) if re.search(r"[A-Za-z0-9]", str(w[2]))]
+            for w in words:
+                word_cues.append((g["t0"] + w[0], g["t0"] + w[1], str(w[2])))
+            texts = [it["text"] for it in its]
+            spoken = [it.get("spoken") or it["text"] for it in its]
+            if len(its) == 1:
+                a, b = (g["t0"] + words[0][0], g["t0"] + words[-1][1]) if words else (g["t0"], g["t1"])
+                cues.append((a, max(b, a + 0.2), texts[0]))
+                continue
+            got = captions.split_by_words(texts, spoken, words, g["t0"], g["t1"]) if words else None
+            if got is None:
+                got, _ = captions.split_by_pauses(texts, spoken, g["audio"], g["sr"], g["t0"])
+                exact = False
+            cues.extend(got)
+        if not cues:
+            return None, None, ""
+        srt = out / f"{stem}.srt"
+        srt.write_text(captions.to_srt(captions.pull_in(cues, duration)), encoding="utf-8")
+        wpath = None
+        if word_cues:
+            wpath = out / f"{stem}.words.srt"
+            wpath.write_text(captions.to_srt(captions.pull_in(word_cues, duration)), encoding="utf-8")
+        note = ("Captions: sentence and word timings from the voice service." if word_cues and exact
+                else "Captions: sentence timings from each sentence's own clip." if exact
+                else "Captions: this voice came back as one piece without timings, so sentence times were "
+                     "placed on the pauses in the audio. Check them before using.")
+        return str(srt), str(wpath) if wpath else None, note
+    except Exception:
+        log.error("Captions could not be written\n%s", traceback.format_exc())
+        return None, None, "Captions could not be written (see the log)."
 
 
 def cloud_gate():
@@ -224,66 +284,113 @@ def cloud_gate():
         fail(429, f"Cloud safety rule: wait {wait:.0f} more second(s) before the next request.")
 
 
+def work(job, s, eng, targets, variation, note=""):
+    """Synthesise the target sentences of one session and export it. Raises on failure."""
+    all_s = sents(s)
+    table = pron.table()
+    for i in targets:                                # written text stays; this is what gets spoken
+        all_s[i]["spoken"], all_s[i]["subs"] = pron.apply(all_s[i]["text"], table)
+    if eng.kind == "cloud":
+        _last_cloud["t"] = time.time()
+        job["message"] = "Sending one request"
+        items = []
+        for i in targets:
+            idx = s["items"].index(all_s[i])
+            nxt = s["items"][idx + 1] if idx + 1 < len(s["items"]) else None
+            items.append({"text": all_s[i]["spoken"], "pause_after": bool(nxt and nxt["type"] == "pause")})
+        chunks, sr = eng.synth_script(items, s["voice"], rate=s["rate"], pause_ms=s["pause_ms"],
+                                      params=s.get("params") or {})
+        _last_cloud["t"] = time.time()
+        words = getattr(eng, "last_words", None)
+        for k, (i, a) in enumerate(zip(targets, chunks)):
+            all_s[i]["words"] = words[k] if isinstance(words, list) and len(words) == len(targets) else None
+            store_sentence(s, all_s[i], i, a, sr, eng)
+        s["merged"] = any(it.get("state") == "merged" for it in all_s)
+        job["done"] = len(targets)
+    else:
+        job["message"] = note + "Loading engine..."
+        engines.ensure_loaded(eng)
+        for n, i in enumerate(targets):
+            it = all_s[i]
+            it["state"] = "working"
+            it["words"] = None
+            job["current"] = i
+            job["message"] = f"{note}Sentence {n + 1} of {len(targets)}"
+            try:
+                a, sr = eng.synth(it["spoken"], s["voice"], rate=s["rate"], variation=variation,
+                                  params=s.get("params") or {}, ref=s.get("ref"))
+                store_sentence(s, it, i, a, sr, eng)
+            except EngineError as e:
+                it["state"], it["error"] = "error", str(e)
+            if not note:
+                job["done"] = n + 1
+            job["session"] = public(s)
+    failed = [it for it in all_s if it.get("state") == "error"]
+    if not s["preview"]:
+        if any(it.get("state") in (None, "pending", "working") for it in all_s):
+            pass
+        elif failed and len(failed) == len(all_s):
+            raise EngineError(failed[0]["error"])
+        else:
+            job["message"] = note + "Joining and normalising"
+            assemble(s, eng)
+            s["delivery"] = extras.deliver(s["final"]["wav"], s.get("episode", ""), s.get("if_exists", "ask"))
+            if s["delivery"]["status"] in ("copied", "error"):
+                log.info("Video folder copy for %s: %s", s.get("episode"), s["delivery"])
+    save_session(s)
+    job["session"] = public(s)
+    return failed
+
+
+def record_failure(s, e):
+    msg = str(e) if isinstance(e, EngineError) else f"{type(e).__name__}: {e}"
+    log.error("Generation failed (%s / %s): %s\n%s", s["engine"], s["voice"], msg, traceback.format_exc())
+    try:
+        if s.get("out_dir"):
+            from pathlib import Path
+            with open(Path(s["out_dir"]) / "errors.log", "a", encoding="utf-8") as f:
+                f.write(f"{datetime.datetime.now().isoformat()} {msg}\n{traceback.format_exc()}\n")
+        save_session(s)
+    except Exception:
+        pass
+    return msg
+
+
 def run_job(job, s, eng, targets, variation):
     """targets = sentence indexes to synthesise."""
     try:
-        all_s = sents(s)
-        if eng.kind == "cloud":
-            _last_cloud["t"] = time.time()
-            job["message"] = "Sending one request"
-            items = []
-            for i in targets:
-                idx = s["items"].index(all_s[i])
-                nxt = s["items"][idx + 1] if idx + 1 < len(s["items"]) else None
-                items.append({"text": all_s[i]["text"], "pause_after": bool(nxt and nxt["type"] == "pause")})
-            chunks, sr = eng.synth_script(items, s["voice"], rate=s["rate"], pause_ms=s["pause_ms"],
-                                          params=s.get("params") or {})
-            _last_cloud["t"] = time.time()
-            for i, a in zip(targets, chunks):
-                store_sentence(s, all_s[i], i, a, sr, eng)
-            s["merged"] = any(it.get("state") == "merged" for it in all_s)
-            job["done"] = len(targets)
-        else:
-            job["message"] = "Loading engine..."
-            engines.ensure_loaded(eng)
-            for n, i in enumerate(targets):
-                it = all_s[i]
-                it["state"] = "working"
-                job["current"] = i
-                job["message"] = f"Sentence {n + 1} of {len(targets)}"
-                try:
-                    a, sr = eng.synth(it["text"], s["voice"], rate=s["rate"], variation=variation,
-                                      params=s.get("params") or {}, ref=s.get("ref"))
-                    store_sentence(s, it, i, a, sr, eng)
-                except EngineError as e:
-                    it["state"], it["error"] = "error", str(e)
-                job["done"] = n + 1
-                job["session"] = public(s)
-        failed = [it for it in all_s if it.get("state") == "error"]
-        if not s["preview"]:
-            if any(it.get("state") in (None, "pending", "working") for it in all_s):
-                pass
-            elif failed and len(failed) == len(all_s):
-                raise EngineError(failed[0]["error"])
-            else:
-                job["message"] = "Joining and normalising"
-                assemble(s, eng)
-        save_session(s)
-        job["session"] = public(s)
+        failed = work(job, s, eng, targets, variation)
         job["status"] = "done"
         job["message"] = (f"{len(failed)} sentence(s) failed. Use Regenerate on them." if failed else "Done")
     except Exception as e:
-        msg = str(e) if isinstance(e, EngineError) else f"{type(e).__name__}: {e}"
-        log.error("Generation failed (%s / %s): %s\n%s", s["engine"], s["voice"], msg, traceback.format_exc())
-        try:
-            if s.get("out_dir"):
-                from pathlib import Path
-                with open(Path(s["out_dir"]) / "errors.log", "a", encoding="utf-8") as f:
-                    f.write(f"{datetime.datetime.now().isoformat()} {msg}\n{traceback.format_exc()}\n")
-            save_session(s)
-        except Exception:
-            pass
-        job.update(status="error", error=msg, session=public(s))
+        job.update(status="error", error=record_failure(s, e), session=public(s))
+    finally:
+        busy.release()
+
+
+def run_batch(job, sessions, eng):
+    """Several episodes one after another. Local engines only (checked before this starts)."""
+    try:
+        for n, s in enumerate(sessions):
+            res = job["results"][n]
+            res["state"] = "working"
+            job["current_episode"] = s["label"]
+            try:
+                failed = work(job, s, eng, list(range(len(sents(s)))), False,
+                              note=f"{s['label']} ({n + 1} of {len(sessions)}): ")
+                f = s.get("final") or {}
+                res.update(state="done", id=s["id"], wav=f.get("wav"), mp3=f.get("mp3"), srt=f.get("srt"),
+                           duration=f.get("duration"), delivery=s.get("delivery"),
+                           note=f"{len(failed)} sentence(s) failed" if failed else "")
+            except Exception as e:
+                res.update(state="error", error=record_failure(s, e))
+            job["done"] = n + 1
+        bad = sum(1 for r in job["results"] if r["state"] == "error")
+        job.update(status="done", session=None,
+                   message=f"Finished. {bad} of {len(sessions)} episode(s) failed." if bad else f"All {len(sessions)} episodes are done.")
+    except Exception as e:
+        log.error("Batch stopped\n%s", traceback.format_exc())
+        job.update(status="error", error=f"{type(e).__name__}: {e}")
     finally:
         busy.release()
 
@@ -328,6 +435,64 @@ class GenBody(BaseModel):
     mp3: bool = False
     label: str = "script"
     params: dict = {}
+    episode: str = ""
+    if_exists: str = "ask"          # copy to the video folder when the file is already there: ask | version | overwrite | skip
+
+
+class BatchBody(BaseModel):
+    text: str                       # the whole file, with its '## EPxx | Title' blocks
+    engine: str
+    voice: str
+    rate: float = 1.0
+    pause_ms: int = 700
+    gap_ms: int = 150
+    mp3: bool = False
+    params: dict = {}
+    episodes: list[str] = []        # empty = every episode in the file
+    deliver: bool = True
+
+
+class EstimateBody(BaseModel):
+    text: str
+    engine: str
+    voice: str = ""
+    rate: float = 1.0
+    pause_ms: int = 700
+    gap_ms: int = 150
+    target: str = ""
+
+
+class PresetBody(BaseModel):
+    name: str
+    engine: str = ""
+    voice: str = ""
+    rate: float = 1.0
+    pause_ms: int = 700
+    gap_ms: int = 150
+    mp3: bool = False
+    params: dict = {}
+    target: str = ""
+
+
+class VoicesBody(BaseModel):
+    hidden: dict = {}
+
+
+class PronBody(BaseModel):
+    rows: list = []
+
+
+class FolderBody(BaseModel):
+    chunks_dir: str = ""
+
+
+class DeliverBody(BaseModel):
+    mode: str = "ask"
+    episode: Optional[str] = None
+
+
+class LastPresetBody(BaseModel):
+    name: str = ""
 
 
 class CmpChoice(BaseModel):
@@ -383,6 +548,7 @@ def index():
 @app.get("/api/state")
 def state():
     p = settings.prefs()
+    inst = installed_copy()
     return {"version": version(), "engines": [e.describe() for e in engines.all_engines()],
             "out_root": str(out_root()), "mp3": audio.mp3_available(), "keyring": settings.keyring_ok(),
             "azure": {"configured": bool(settings.get_secret("azure_key")),
@@ -390,6 +556,10 @@ def state():
             "update": {"repo": updater.repo(), "auto_check": p.get("auto_check", True),
                        "token": bool(settings.get_secret("github_token"))},
             "busy": busy.locked(), "cloud_gap": CLOUD_MIN_GAP,
+            "root": str(ROOT), "data": str(DATA), "data_shared": DATA_SHARED,
+            "installed": str(inst) if inst else "", "is_installed_copy": bool(inst and inst.resolve() == ROOT.resolve()),
+            "pronunciations": pron.table(), "chunks_dir": extras.chunks_dir(),
+            "presets": extras.presets(), "last_preset": p.get("last_preset", ""),
             "profiles": {"passage": profiles.PASSAGE, "consent": profiles.CONSENT,
                          "min_s": profiles.MIN_S, "max_s": profiles.MAX_S}}
 
@@ -436,6 +606,8 @@ def resolve_voice(eng, voice):
     if not match:
         fail(400, "Pick a voice for this engine." if not eng.uses_profiles
              else "Pick a voice profile for this engine (or create one under Voice profiles).")
+    if extras.is_hidden(eng.id, voice):
+        fail(400, f"The voice {match['label']} is hidden (Settings, Voices), so it is not used. Pick another voice or show it again.")
     if voice.startswith("p:"):
         try:
             return match["label"], str(profiles.ref_path(voice[2:]))
@@ -463,6 +635,26 @@ def clamp(b):
     return (min(1.3, max(0.7, b.rate)), min(5000, max(0, b.pause_ms)), min(3000, max(0, b.gap_ms)))
 
 
+def new_session(eng, b, text, label, vlabel, ref, preview=False, episode="", if_exists="ask"):
+    items = textproc.split_script(text)
+    if not any(it["type"] == "s" for it in items):
+        fail(400, "There is no text to speak.")
+    if preview:
+        items = [next(it for it in items if it["type"] == "s")]
+    label = re.sub(r"[^A-Za-z0-9_-]+", "", label)[:40] or "script"
+    episode = (episode or "").strip()
+    if episode and not extras.EPISODE.match(episode):
+        fail(400, "The episode code may contain only letters, digits, - and _ (for example EP22).")
+    if if_exists not in ("ask", "version", "overwrite", "skip"):
+        fail(400, "Unknown choice for an existing file.")
+    rate, pause_ms, gap_ms = clamp(b)
+    return {"id": uuid.uuid4().hex[:12], "created": time.time(), "engine": eng.id, "engine_kind": eng.kind,
+            "voice": b.voice, "voice_label": vlabel, "ref": ref, "params": clean_params(eng, b.params),
+            "rate": rate, "pause_ms": pause_ms, "gap_ms": gap_ms, "preview": preview, "mp3": b.mp3,
+            "label": label, "text": textproc.clean(text), "items": items,
+            "episode": "" if preview else episode, "if_exists": if_exists}
+
+
 @app.post("/api/generate")
 def generate(b: GenBody):
     try:
@@ -471,18 +663,150 @@ def generate(b: GenBody):
         fail(400, str(e))
     usable(eng)
     vlabel, ref = resolve_voice(eng, b.voice)
-    items = textproc.split_script(b.text)
-    if not any(it["type"] == "s" for it in items):
-        fail(400, "There is no text to speak.")
-    if b.preview:
-        items = [next(it for it in items if it["type"] == "s")]
-    label = re.sub(r"[^A-Za-z0-9_-]+", "", b.label)[:40] or "script"
-    rate, pause_ms, gap_ms = clamp(b)
-    s = {"id": uuid.uuid4().hex[:12], "created": time.time(), "engine": eng.id, "engine_kind": eng.kind,
-         "voice": b.voice, "voice_label": vlabel, "ref": ref, "params": clean_params(eng, b.params),
-         "rate": rate, "pause_ms": pause_ms, "gap_ms": gap_ms, "preview": b.preview, "mp3": b.mp3,
-         "label": label, "text": textproc.clean(b.text), "items": items}
+    s = new_session(eng, b, b.text, b.label, vlabel, ref, b.preview, b.episode, b.if_exists)
     return start_job(s, eng, list(range(len(sents(s)))))
+
+
+@app.post("/api/generate_all")
+def generate_all(b: BatchBody):
+    """Every episode in a file, one after another. Local engines only."""
+    try:
+        eng = engines.get(b.engine)
+    except EngineError as e:
+        fail(400, str(e))
+    if eng.kind != "local":
+        fail(400, "Cloud safety rule: cloud voices are generated one episode per click. "
+                  "Generate all episodes works with the engines that run on this PC.")
+    usable(eng)
+    vlabel, ref = resolve_voice(eng, b.voice)
+    eps = textproc.parse_episodes(b.text.replace("\r", ""))
+    if b.episodes:
+        eps = [e for e in eps if e["id"] in set(b.episodes)]
+    if not eps:
+        fail(400, "No episodes found. Each one starts with a line like '## EP22 | Title' and its voiceover lines start with '> '.")
+    if len(eps) > 60:
+        fail(400, "That is more than 60 episodes in one go. Pick fewer.")
+    if setup_runner.S["running"]:
+        fail(409, "Engines are being downloaded. Local engines are available again when that finishes.")
+    sessions = [new_session(eng, b, e["text"], e["id"], vlabel, ref, False,
+                            e["id"] if b.deliver else "", "version") for e in eps]
+    if not busy.acquire(blocking=False):
+        fail(409, "A generation is already running. Wait for it to finish.")
+    job = {"id": uuid.uuid4().hex[:12], "kind": "batch", "status": "running", "total": len(sessions), "done": 0,
+           "current": None, "message": "Starting", "error": None, "session": None,
+           "results": [{"episode": e["id"], "title": e["title"], "state": "pending"} for e in eps]}
+    jobs[job["id"]] = job
+    threading.Thread(target=run_batch, args=(job, sessions, eng), daemon=True).start()
+    return job
+
+
+@app.post("/api/estimate")
+def estimate(b: EstimateBody):
+    try:
+        eng = engines.get(b.engine)
+    except EngineError as e:
+        fail(400, str(e))
+    match = next((v for v in eng.voice_list() if v["id"] == b.voice), None)
+    if not match:
+        return {"empty": True}
+    rate, pause_ms, gap_ms = clamp(b)
+    return extras.estimate(b.text, eng, b.voice, match["label"], rate, pause_ms, gap_ms, b.target)
+
+
+# ---------------------------------------------------------------- presets, voices, pronunciations, folders
+@app.get("/api/presets")
+def preset_list():
+    return {"presets": extras.presets(), "last": settings.prefs().get("last_preset", "")}
+
+
+@app.post("/api/presets")
+def preset_save(b: PresetBody):
+    try:
+        return extras.save_preset(b.model_dump() if hasattr(b, "model_dump") else b.dict())
+    except ValueError as e:
+        fail(400, str(e))
+
+
+@app.delete("/api/presets")
+def preset_delete(name: str):
+    extras.delete_preset(name)
+    return {"deleted": True}
+
+
+@app.post("/api/presets/last")
+def preset_last(b: LastPresetBody):
+    settings.set_prefs(last_preset=b.name)
+    return {"saved": True}
+
+
+@app.post("/api/settings/voices")
+def voices_save(b: VoicesBody):
+    known = {e.id: {v["id"] for v in e.voice_list()} for e in engines.all_engines()}
+    clean = {}
+    for eid, ids in (b.hidden or {}).items():
+        if eid in known and isinstance(ids, list):
+            keep = [str(i) for i in ids if str(i) in known[eid]]
+            if keep:
+                clean[eid] = sorted(set(keep))
+    settings.set_prefs(hidden_voices=clean)
+    return {"hidden": clean}
+
+
+@app.post("/api/settings/pronunciations")
+def pron_save(b: PronBody):
+    return {"rows": pron.save(b.rows)}
+
+
+@app.post("/api/settings/pronunciations/reset")
+def pron_reset():
+    return {"rows": pron.save(pron.DEFAULT)}
+
+
+@app.post("/api/settings/folders")
+def folders_save(b: FolderBody):
+    try:
+        return {"chunks_dir": extras.set_chunks_dir(b.chunks_dir)}
+    except ValueError as e:
+        fail(400, str(e))
+
+
+@app.post("/api/sessions/{sid}/deliver")
+def deliver(sid: str, b: DeliverBody):
+    """Copy this take to the video folder. 'overwrite' only ever comes from the user's own choice."""
+    s = load_session(sid)
+    if not s.get("final"):
+        fail(409, "This take has no finished file yet.")
+    if b.episode is not None:
+        ep = b.episode.strip()
+        if ep and not extras.EPISODE.match(ep):
+            fail(400, "The episode code may contain only letters, digits, - and _ (for example EP22).")
+        s["episode"] = ep
+    if b.mode not in ("ask", "version", "overwrite", "skip"):
+        fail(400, "Unknown choice.")
+    s["delivery"] = extras.deliver(s["final"]["wav"], s.get("episode", ""), b.mode)
+    log.info("Video folder copy for %s (%s): %s", s.get("episode"), b.mode, s["delivery"])
+    save_session(s)
+    return public(s)
+
+
+@app.get("/api/memory")
+def memory():
+    ram, commit = sysinfo.memory_free()
+    return {"free_ram_gb": None if ram is None else round(ram, 1),
+            "free_commit_gb": None if commit is None else round(commit, 1), "apps": sysinfo.top_apps(6)}
+
+
+@app.get("/api/cleanup")
+def cleanup_list():
+    return extras.leftovers()
+
+
+@app.post("/api/cleanup")
+def cleanup_run():
+    if busy.locked() or setup_runner.S["running"]:
+        fail(409, "Wait for the current work to finish first.")
+    engines.shutdown()                  # the light environment must not be in use while packages are removed
+    return extras.remove_leftovers()
 
 
 # ---------------------------------------------------------------- A/B compare
@@ -542,7 +866,7 @@ def compare(b: CmpBody):
             continue
         if len(items) == 2:
             break
-        items.append({"text": it["text"], "pause_after": False})
+        items.append({"text": pron.apply(it["text"])[0], "shown": it["text"], "pause_after": False})
     if not items:
         fail(400, "There is no text to speak.")
     if len(items) == 2:
@@ -566,7 +890,7 @@ def compare(b: CmpBody):
     if clouds:
         _last_cloud["t"] = time.time()
     job = {"id": uuid.uuid4().hex[:12], "status": "running", "total": len(picks), "done": 0, "message": "Starting",
-           "error": None, "session": None, "text": " ".join(i["text"] for i in items),
+           "error": None, "session": None, "text": " ".join(i["shown"] for i in items),
            "results": [{"label": f"{p[0].name}: {p[2]}", "state": "pending"} for p in picks]}
     jobs[job["id"]] = job
     threading.Thread(target=run_compare, args=(job, b, picks, items, uuid.uuid4().hex[:12]), daemon=True).start()
@@ -709,11 +1033,12 @@ def sentence_audio(sid: str, fname: str):
 @app.get("/api/sessions/{sid}/final")
 def final_audio(sid: str, fmt: str = "wav"):
     s = load_session(sid)
-    f = (s.get("final") or {}).get("mp3" if fmt == "mp3" else "wav")
+    key = {"mp3": "mp3", "srt": "srt", "words": "srt_words"}.get(fmt, "wav")
+    f = (s.get("final") or {}).get(key)
     if not f or not os.path.exists(f):
         fail(404, "The exported file has been moved or deleted.")
-    return FileResponse(f, media_type="audio/mpeg" if fmt == "mp3" else "audio/wav",
-                        filename=os.path.basename(f))
+    kind = {"mp3": "audio/mpeg", "wav": "audio/wav"}.get(key, "application/x-subrip")
+    return FileResponse(f, media_type=kind, filename=os.path.basename(f))
 
 
 @app.post("/api/sessions/{sid}/open")
@@ -877,21 +1202,83 @@ def already_running():
         return sock.connect_ex((HOST, PORT)) == 0
 
 
+def _ask(path, post=False, timeout=3):
+    import urllib.request
+    req = urllib.request.Request(f"http://{HOST}:{PORT}{path}", data=b"{}" if post else None,
+                                 headers={"Content-Type": "application/json"}, method="POST" if post else "GET")
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read() or b"{}")
+
+
+def claim():
+    """Who answers on our port? -> (own: start our own server, problem: text to show or '').
+
+    Nothing running: we start. The same version from the same folder: join it
+    (a second window). Anything else, an older version or another copy, is
+    asked to stop so this one takes over; if it is in the middle of a
+    generation it is left alone and the user is told."""
+    if not already_running():
+        return True, ""
+    try:
+        st = _ask("/api/state")
+    except Exception:
+        return False, (f"Something else on this PC is using port {PORT}, so Voice Studio cannot start. "
+                       "Close that program, or restart the PC.")
+    theirs, their_root = st.get("version", "?"), st.get("root", "")
+    if theirs == version() and their_root and os.path.normcase(their_root) == os.path.normcase(str(ROOT)):
+        return False, ""
+    what = f"Voice Studio {theirs}" + (f" from {their_root}" if their_root else " (an older copy)")
+    if st.get("busy"):
+        log.warning("%s is running and busy; not taking over", what)
+        return False, (f"{what} is still running and is in the middle of a generation. Let it finish, quit it "
+                       f"(Quit button, top right), then start Voice Studio {version()} again.")
+    log.info("%s is running; asking it to stop so %s from %s can start", what, version(), ROOT)
+    try:
+        _ask("/api/quit", post=True)
+    except Exception:
+        pass
+    for _ in range(60):
+        if not already_running():
+            time.sleep(0.4)
+            return True, ""
+        time.sleep(0.25)
+    return False, (f"{what} is still running and did not stop when asked. End it in Task Manager "
+                   f"(python.exe or pythonw.exe), then start Voice Studio {version()} again.")
+
+
+CLI_BAT = ('@echo off\r\nrem Command-line access to the running Voice Studio app. Example:\r\n'
+           'rem   voicestudio-cli generate --preset "WCGW - Harry" --in script.txt --episode EP22\r\n'
+           '"%~dp0runtime\\Scripts\\python.exe" "%~dp0tools\\voicestudio_cli.py" %*\r\n')
+
+
 def prepare():
     """Everything that has to happen before the server starts answering."""
     import atexit
     engines.discover()
     clear_previews()
     atexit.register(engines.shutdown)
+    try:                                # an update from an older version does not bring this file itself
+        bat = ROOT / "voicestudio-cli.bat"
+        if not bat.exists() and (ROOT / "tools" / "voicestudio_cli.py").exists():
+            bat.write_bytes(CLI_BAT.encode("ascii"))
+    except Exception:
+        pass
     log.info("Engines: %s", {e.id: e.status()["state"] for e in engines.all_engines()})
-    log.info("Voice Studio %s starting on http://%s:%s/", version(), HOST, PORT)
+    log.info("Voice Studio %s starting on http://%s:%s/ from %s (data: %s)", version(), HOST, PORT, ROOT, DATA)
 
 
 def main():
     """Browser mode: a console window plus a browser tab."""
     harden_console()
     url = f"http://{HOST}:{PORT}/"
-    if already_running():                            # already running: just show it
+    own, problem = claim()
+    if problem:
+        print("\n  " + problem + "\n")
+        log.warning(problem)
+        if os.name == "nt":
+            os.system("pause")
+        return
+    if not own:                                      # this same copy is already running: just show it
         webbrowser.open(url)
         return
     prepare()

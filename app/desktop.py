@@ -59,7 +59,14 @@ def main():
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
         except Exception:
             pass
-    owner = not server.already_running()
+    owner, problem = server.claim()
+    if problem:                                  # an older copy could not be replaced: say so instead of showing its page
+        server.log.warning(problem)
+        page = ("<body style='font-family:Segoe UI,sans-serif;background:#1A1A1A;color:#F2F2F0;padding:40px;line-height:1.6'>"
+                f"<h2>Voice Studio {server.version()} could not start</h2><p>{problem}</p></body>")
+        webview.create_window("Voice Studio", html=page, width=640, height=360, background_color="#1A1A1A")
+        webview.start()
+        os._exit(1)
     if owner:
         server.prepare()
         threading.Thread(target=_serve, daemon=True).start()
@@ -67,7 +74,7 @@ def main():
             if server.already_running():
                 break
             time.sleep(0.1)
-    server.log.info("Voice Studio %s window starting (%s)", server.version(), "own server" if owner else "joining running app")
+    server.log.info("Voice Studio %s window starting (%s)", server.version(), "own server" if owner else "second window of the same running app")
     window = webview.create_window("Voice Studio", URL, width=1360, height=920, min_size=(980, 640),
                                    background_color="#1A1A1A", text_select=True)
     window.events.shown += lambda: _set_icon(window)
