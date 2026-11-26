@@ -46,8 +46,8 @@ Local engines load one after another. Only one cloud voice per comparison.
 
 ## Installer
 Every push to GitHub builds `VoiceStudio-Setup-<version>.exe` (see the repository's Actions tab) and tests the
-app on a clean Windows machine. Pushing a tag such as `v0.3.0` attaches the installer to a draft Release; publish
-the draft to make it downloadable and to switch on the in-app updater. The installer is small: it installs the app
+app on a clean Windows machine. It also puts the installer on a draft Release named after `VERSION`; publish the
+draft on GitHub (Releases, Edit, Publish) to make it downloadable and to switch on the in-app updater. The installer is small: it installs the app
 for the current user, then downloads the engines ticked during installation. It is not code-signed, so Windows
 shows an "unknown publisher" notice on first run (More info, then Run anyway). Uninstalling removes the app,
 environments and models but keeps `data\` (voice profiles and history).
@@ -63,7 +63,7 @@ Moving this folder on your own PC: move it, then run `Setup.bat` once to refresh
 ## Updates
 Settings > Updates. Updates come from the GitHub repository's Releases. Only the app's code is replaced; the old
 files are copied to `data\backups\` first. After an update, run `Setup.bat` once. To publish an update: change
-`VERSION`, push, and create a Release whose tag is the version number (for example `v0.2.0`).
+`VERSION`, push, wait for the build, then publish the draft Release it creates.
 
 ## Add a new voice engine
 1. Copy `app\engines\_template.py` to a new file in the same folder without the underscore.

@@ -3,14 +3,13 @@ name: Build and test
 # Builds the Windows installer and tests the app on a clean Windows machine.
 # - every push to main: build the installer (kept as a workflow artifact) and
 #   run the light-engine test
-# - a tag such as v0.3.0: also attach the installer to a DRAFT release, which
-#   stays private until it is published by hand
+# - every push to main also puts the installer on a DRAFT release named after
+#   VERSION (v0.3.0, ...). A draft stays private until it is published by hand.
 # - "Run workflow" button: choose which engines to test
 
 on:
   push:
     branches: [main]
-    tags: ["v*"]
   workflow_dispatch:
     inputs:
       engines:
@@ -38,16 +37,24 @@ jobs:
         with:
           name: VoiceStudio-Setup
           path: dist/*.exe
-      - name: Attach to a draft release
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Put the installer on a draft release for this version
+        if: github.ref == 'refs/heads/main'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = "${{ github.ref_name }}"
-          gh release view $tag 2>$null
-          if ($LASTEXITCODE -ne 0) { gh release create $tag --draft --title "Voice Studio $tag" --notes "Download VoiceStudio-Setup and run it. Windows shows an 'unknown publisher' notice because the installer is not code-signed: choose More info, then Run anyway." }
-          gh release upload $tag (Get-ChildItem dist\*.exe).FullName --clobber
+          # A draft release is private until it is published by hand on GitHub.
+          $v = (Get-Content VERSION -Raw).Trim()
+          $tag = "v$v"
+          $exe = (Get-ChildItem dist\*.exe).FullName
+          $rel = gh release list --limit 50 --json tagName,isDraft | ConvertFrom-Json | Where-Object { $_.tagName -eq $tag }
+          if (-not $rel) {
+            gh release create $tag $exe --draft --target $env:GITHUB_SHA --title "Voice Studio $v" --notes "Download VoiceStudio-Setup-$v.exe and run it. Windows shows an 'unknown publisher' notice because the installer is not code-signed: choose More info, then Run anyway. The installer downloads the voice engines you tick (2 to 16 GB)."
+          } elseif ($rel.isDraft) {
+            gh release upload $tag $exe --clobber
+          } else {
+            Write-Host "Release $tag is already published. Change VERSION to make a new one."
+          }
 
   test:
     runs-on: windows-latest
